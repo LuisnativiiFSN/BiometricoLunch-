@@ -1,0 +1,25 @@
+{
+  "name": "comedor-biometrico",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Monorepo del sistema de gestion de comedor",
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": ">=20.19 <21 || >=22.12 <23 || >=24 <25"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @comedor/web --filter @comedor/api dev",
+    "dev:web": "pnpm --filter @comedor/web dev",
+    "dev:api": "pnpm --filter @comedor/api dev",
+    "build": "pnpm --recursive build",
+    "test": "pnpm --filter @comedor/api test:integration",
+    "test:biometrics": "pnpm --filter @comedor/api test:biometrics",
+    "db:generate": "pnpm --filter @comedor/api prisma:generate",
+    "db:seed": "pnpm --filter @comedor/api build && pnpm --filter @comedor/api prisma:seed",
+    "db:validate": "pnpm --filter @comedor/api prisma:validate",
+    "db:migrate": "pnpm --filter @comedor/api exec prisma migrate dev",
+    "db:deploy": "pnpm --filter @comedor/api exec prisma migrate deploy",
+    "db:status": "pnpm --filter @comedor/api exec prisma migrate status",
+    "db:studio": "pnpm --filter @comedor/api exec prisma studio"
+  }
+}

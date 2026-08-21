@@ -1,0 +1,142 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlserver"
+}
+
+model Employee {
+  employeeCode            String            @id @map("employee_code") @db.VarChar(50)
+  name                    String            @db.VarChar(150)
+  email                   String            @db.VarChar(254)
+  department              String            @db.VarChar(100)
+  active                  Boolean           @default(true)
+  createdAt               DateTime          @default(now()) @map("created_at") @db.DateTime2
+  updatedAt               DateTime          @updatedAt @map("updated_at") @db.DateTime2
+  fingerprints            Fingerprint[]
+  mealRequests            MealRequest[]
+  mealReservations        MealReservation[] @relation("ReservationEmployee")
+  transferredReservations MealReservation[] @relation("ReservationTransferEmployee")
+  auditLogs               AuditLog[]
+
+  @@map("employees")
+}
+
+model User {
+  id             String     @id @default(uuid()) @db.UniqueIdentifier
+  username       String     @unique(map: "users_username_key") @db.VarChar(50)
+  passwordHash   String     @map("password_hash") @db.VarChar(255)
+  role           String     @db.VarChar(20)
+  active         Boolean    @default(true)
+  passwordLocked Boolean    @default(false) @map("password_locked")
+  lastLoginAt    DateTime?  @map("last_login_at") @db.DateTime2
+  createdAt      DateTime   @default(now()) @map("created_at") @db.DateTime2
+  updatedAt      DateTime   @updatedAt @map("updated_at") @db.DateTime2
+  auditLogs      AuditLog[]
+
+  @@map("users")
+}
+
+model Meal {
+  id               String            @id @default(uuid()) @db.UniqueIdentifier
+  name             String            @db.VarChar(150)
+  availableDate    DateTime          @map("available_date") @db.Date
+  mealType         String            @default("LUNCH") @map("meal_type") @db.VarChar(20)
+  active           Boolean           @default(true)
+  createdAt        DateTime          @default(now()) @map("created_at") @db.DateTime2
+  updatedAt        DateTime          @updatedAt @map("updated_at") @db.DateTime2
+  mealReservations MealReservation[]
+
+  @@unique([name, availableDate, mealType], map: "meals_name_date_type_key")
+  @@index([availableDate, mealType, active], map: "meals_available_date_type_active_idx")
+  @@map("meals")
+}
+
+model Fingerprint {
+  id             String   @id @default(uuid()) @db.UniqueIdentifier
+  employeeId     String   @map("employee_id") @db.VarChar(50)
+  fingerPosition String   @map("finger_position") @db.VarChar(50)
+  templateData   Bytes    @map("template_data") @db.VarBinary(Max)
+  templateFormat String   @map("template_format") @db.VarChar(50)
+  quality        Int
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime2
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.DateTime2
+  employee       Employee @relation(fields: [employeeId], references: [employeeCode], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([employeeId])
+  @@map("fingerprints")
+}
+
+model MealRequest {
+  id                String           @id @default(uuid()) @db.UniqueIdentifier
+  employeeId        String           @map("employee_id") @db.VarChar(50)
+  mealReservationId String?          @map("meal_reservation_id") @db.UniqueIdentifier
+  mealDate          DateTime         @map("meal_date") @db.Date
+  mealType          String           @default("LUNCH") @map("meal_type") @db.VarChar(20)
+  requestedAt       DateTime         @default(now()) @map("requested_at") @db.DateTime2
+  status            String           @db.VarChar(20)
+  createdAt         DateTime         @default(now()) @map("created_at") @db.DateTime2
+  employee          Employee         @relation(fields: [employeeId], references: [employeeCode], onDelete: NoAction, onUpdate: Cascade)
+  mealReservation   MealReservation? @relation(fields: [mealReservationId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  ticket            Ticket?
+
+  @@index([employeeId])
+  @@index([mealReservationId])
+  @@index([mealDate, mealType])
+  @@map("meal_requests")
+}
+
+model MealReservation {
+  id                 String        @id @default(uuid()) @db.UniqueIdentifier
+  employeeId         String        @map("employee_id") @db.VarChar(50)
+  transferEmployeeId String?       @map("transfer_employee") @db.VarChar(50)
+  mealId             String        @map("meal_id") @db.UniqueIdentifier
+  mealDate           DateTime      @map("meal_date") @db.Date
+  mealType           String        @default("LUNCH") @map("meal_type") @db.VarChar(20)
+  quantity           Int           @default(1)
+  createdAt          DateTime      @default(now()) @map("created_at") @db.DateTime2
+  updatedAt          DateTime      @updatedAt @map("updated_at") @db.DateTime2
+  employee           Employee      @relation("ReservationEmployee", fields: [employeeId], references: [employeeCode], onDelete: NoAction, onUpdate: Cascade)
+  transferEmployee   Employee?     @relation("ReservationTransferEmployee", fields: [transferEmployeeId], references: [employeeCode], onDelete: NoAction, onUpdate: NoAction)
+  meal               Meal          @relation(fields: [mealId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  mealRequests       MealRequest[]
+
+  @@unique([employeeId, mealDate, mealType], map: "meal_reservations_employee_date_type_key")
+  @@index([mealId], map: "meal_reservations_meal_id_idx")
+  @@index([transferEmployeeId], map: "meal_reservations_transfer_employee_idx")
+  @@index([mealDate, mealType], map: "meal_reservations_meal_date_meal_type_idx")
+  @@map("meal_reservations")
+}
+
+model Ticket {
+  id            String      @id @default(uuid()) @db.UniqueIdentifier
+  mealRequestId String      @unique @map("meal_request_id") @db.UniqueIdentifier
+  ticketCode    String      @unique @map("ticket_code") @db.VarChar(100)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.DateTime2
+  mealRequest   MealRequest @relation(fields: [mealRequestId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("tickets")
+}
+
+model AuditLog {
+  id              String    @id @default(uuid()) @db.UniqueIdentifier
+  entityName      String    @map("entity_name") @db.VarChar(100)
+  entityId        String?   @map("entity_id") @db.VarChar(100)
+  action          String    @db.VarChar(20)
+  actorEmployeeId String?   @map("actor_employee_id") @db.VarChar(50)
+  actorUserId     String?   @map("actor_user_id") @db.UniqueIdentifier
+  previousValues  String?   @map("previous_values") @db.NVarChar(Max)
+  newValues       String?   @map("new_values") @db.NVarChar(Max)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime2
+  actorEmployee   Employee? @relation(fields: [actorEmployeeId], references: [employeeCode], onDelete: NoAction, onUpdate: NoAction)
+  actorUser       User?     @relation(fields: [actorUserId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([entityName, entityId], map: "audit_logs_entity_idx")
+  @@index([actorEmployeeId], map: "audit_logs_actor_employee_idx")
+  @@index([actorUserId], map: "audit_logs_actor_user_idx")
+  @@index([createdAt], map: "audit_logs_created_at_idx")
+  @@map("audit_logs")
+}
