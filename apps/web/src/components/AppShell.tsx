@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { fasaniLogo } from '../assets/fasani-logo';
 import type { AuthUser, UserRole } from '../types/auth';
 
-export type AppPage = 'login' | 'consultation' | 'home' | 'employees' | 'deliveries' | 'pending' | 'manual' | 'users';
+export type AppPage = 'login' | 'consultation' | 'weekly-order' | 'weekly-menu' | 'home' | 'daily-results' | 'employees' | 'deliveries' | 'pending' | 'transfers' | 'users';
 
 interface AppShellProps {
   activePage: AppPage;
@@ -14,26 +14,37 @@ interface AppShellProps {
 
 const navigation: Array<{ id: AppPage; label: string; public?: boolean; roles?: UserRole[] }> = [
   { id: 'login', label: 'Iniciar sesión', public: true },
-  { id: 'consultation', label: 'Consulta', public: true, roles: ['ADMIN', 'RH', 'CHEF'] },
-  { id: 'home', label: 'Inicio' },
+  { id: 'weekly-order', label: 'Encargar comida', public: true, roles: ['ADMIN', 'RH'] },
+  { id: 'home', label: 'Resultados semanales' },
+  { id: 'daily-results', label: 'Resultados de hoy' },
+  { id: 'weekly-menu', label: 'Menú semanal', roles: ['ADMIN', 'RH'] },
+  { id: 'consultation', label: 'Consulta', public: true, roles: ['ADMIN', 'RH'] },
   { id: 'employees', label: 'Empleados', roles: ['ADMIN', 'RH'] },
   { id: 'deliveries', label: 'Entregas' },
   { id: 'pending', label: 'Pendientes' },
-  { id: 'manual', label: 'Solicitud manual', roles: ['ADMIN'] },
+  { id: 'transfers', label: 'Transferencias', roles: ['ADMIN', 'RH'] },
   { id: 'users', label: 'Usuarios', roles: ['ADMIN'] },
 ];
 
 function NavigationIcon({ page }: { page: AppPage }) {
-  if (page === 'login' || page === 'consultation' || page === 'users') {
-    const glyph = page === 'login' ? '↗' : page === 'consultation' ? '?' : 'U';
+  if (page === 'login' || page === 'consultation' || page === 'users' || page === 'transfers') {
+    const glyph = page === 'login' ? '↗' : page === 'consultation' ? '?' : page === 'transfers' ? '⇄' : 'U';
     return <span className="nav-glyph" aria-hidden="true">{glyph}</span>;
   }
 
   if (page === 'home') {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M3 11.5 12 4l9 7.5" />
-        <path d="M5.5 10.5V20h13v-9.5M9.5 20v-6h5v6" />
+        <path d="M4 20V10M10 20V5M16 20v-7M22 20H2" />
+      </svg>
+    );
+  }
+
+  if (page === 'daily-results') {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="8" />
+        <path d="M12 4v8l5.5 5.5" />
       </svg>
     );
   }
@@ -53,15 +64,6 @@ function NavigationIcon({ page }: { page: AppPage }) {
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="12" r="8" />
         <path d="M12 8v4l2.7 2" />
-      </svg>
-    );
-  }
-
-  if (page === 'manual') {
-    return (
-      <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M12 5v14M5 12h14" />
-        <circle cx="12" cy="12" r="9" />
       </svg>
     );
   }

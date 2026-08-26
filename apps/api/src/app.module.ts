@@ -9,6 +9,7 @@ import { KioskMockModule } from './kiosk-mock/kiosk-mock.module.js';
 import { MealsModule } from './meals/meals.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 import { UsersModule } from './users/users.module.js';
+import { TransfersModule } from './transfers/transfers.module.js';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { UsersModule } from './users/users.module.js';
     EmployeesModule,
     KioskMockModule,
     MealsModule,
+    TransfersModule,
     UsersModule,
   ],
   controllers: [AppController],

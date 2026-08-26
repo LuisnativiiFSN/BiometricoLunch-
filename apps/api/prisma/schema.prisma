@@ -54,6 +54,16 @@ model Meal {
   @@map("meals")
 }
 
+model MealOrderCutoff {
+  id         String   @id @default(uuid()) @db.UniqueIdentifier
+  mealDate   DateTime @unique(map: "meal_order_cutoffs_meal_date_key") @map("meal_date") @db.Date
+  cutoffTime String   @map("cutoff_time") @db.VarChar(5)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime2
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime2
+
+  @@map("meal_order_cutoffs")
+}
+
 model Fingerprint {
   id             String   @id @default(uuid()) @db.UniqueIdentifier
   employeeId     String   @map("employee_id") @db.VarChar(50)

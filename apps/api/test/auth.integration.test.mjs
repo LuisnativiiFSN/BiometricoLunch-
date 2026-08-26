@@ -13,6 +13,7 @@ const MANAGED_USER = 'auto-managed-rh';
 const TEST_PASSWORD = 'AutomaticTest!2026';
 const MANAGED_PASSWORD = 'ManagedInitial!2026';
 const MANAGED_NEW_PASSWORD = 'ManagedUpdated!2026';
+const TEST_MEAL_NAME = 'AUTO-MEAL-ALMUERZO ADMINISTRATIVO';
 const prisma = new PrismaService();
 let app;
 let baseUrl;
@@ -24,19 +25,21 @@ async function cleanup() {
   });
   const ids = users.map((user) => user.id);
 
-  if (ids.length === 0) return;
+  if (ids.length > 0) {
+    await prisma.$transaction([
+      prisma.auditLog.deleteMany({
+        where: {
+          OR: [
+            { actorUserId: { in: ids } },
+            { entityName: 'users', entityId: { in: ids } },
+          ],
+        },
+      }),
+      prisma.user.deleteMany({ where: { id: { in: ids } } }),
+    ]);
+  }
 
-  await prisma.$transaction([
-    prisma.auditLog.deleteMany({
-      where: {
-        OR: [
-          { actorUserId: { in: ids } },
-          { entityName: 'users', entityId: { in: ids } },
-        ],
-      },
-    }),
-    prisma.user.deleteMany({ where: { id: { in: ids } } }),
-  ]);
+  await prisma.meal.deleteMany({ where: { name: TEST_MEAL_NAME } });
 }
 
 async function login(username) {
@@ -60,6 +63,17 @@ function api(path, cookie, options = {}) {
       ...options.headers,
     },
   });
+}
+
+function getToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Guatemala',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 before(async () => {
@@ -134,7 +148,25 @@ describe('autenticación y permisos por rol', () => {
       403,
     );
     assert.equal((await api('/employees', chefCookie)).status, 403);
-    assert.equal((await api('/meals/pending-today', chefCookie)).status, 200);
+    assert.equal((await api('/employees/CUALQUIERA', chefCookie)).status, 403);
+    assert.equal(
+      (
+        await api('/employees', chefCookie, {
+          method: 'POST',
+          body: JSON.stringify({
+            employeeCode: 'CHEF-NO-AUTORIZADO',
+            name: 'Sin acceso',
+          }),
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await api('/meals/pending-today?employeeCode=18358', chefCookie)
+      ).status,
+      200,
+    );
     assert.equal((await api('/users', chefCookie)).status, 403);
   });
 
@@ -168,6 +200,93 @@ describe('autenticación y permisos por rol', () => {
         })
       ).status,
       400,
+    );
+  });
+
+  test('solo el administrador agrega el almuerzo disponible de hoy', async () => {
+    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+      login(TEST_USERS[0]),
+      login(TEST_USERS[1]),
+      login(TEST_USERS[2]),
+    ]);
+    const body = JSON.stringify({ name: TEST_MEAL_NAME });
+
+    assert.equal(
+      (
+        await api('/meals/available-today', rhCookie, {
+          method: 'POST',
+          body,
+        })
+      ).status,
+      403,
+    );
+    assert.equal(
+      (
+        await api('/meals/available-today', chefCookie, {
+          method: 'POST',
+          body,
+        })
+      ).status,
+      403,
+    );
+
+    const createdResponse = await api('/meals/available-today', adminCookie, {
+      method: 'POST',
+      body,
+    });
+    assert.equal(createdResponse.status, 201);
+    const created = await createdResponse.json();
+    assert.equal(created.status, 'CREATED');
+    assert.equal(created.meal.name, TEST_MEAL_NAME);
+    assert.equal(created.meal.mealType, 'LUNCH');
+
+    const repeatedResponse = await api('/meals/available-today', adminCookie, {
+      method: 'POST',
+      body,
+    });
+    assert.equal(repeatedResponse.status, 201);
+    const repeated = await repeatedResponse.json();
+    assert.equal(repeated.status, 'ALREADY_EXISTS');
+    assert.equal(repeated.meal.id, created.meal.id);
+    assert.equal(
+      await prisma.meal.count({ where: { name: TEST_MEAL_NAME } }),
+      1,
+    );
+  });
+
+  test('la transferencia es exclusiva de Administrador y Recursos Humanos', async () => {
+    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+      login(TEST_USERS[0]),
+      login(TEST_USERS[1]),
+      login(TEST_USERS[2]),
+    ]);
+    const body = JSON.stringify({
+      fromEmployeeCode: 'D1-NO-EXISTE',
+      toEmployeeCode: 'D2-NO-EXISTE',
+      mealDate: getToday(),
+    });
+
+    assert.equal(
+      (await api('/transfers', adminCookie, { method: 'POST', body })).status,
+      404,
+    );
+    assert.equal(
+      (await api('/transfers', chefCookie, { method: 'POST', body })).status,
+      403,
+    );
+    assert.equal(
+      (await api('/transfers', rhCookie, { method: 'POST', body })).status,
+      404,
+    );
+    assert.equal((await api('/transfers', adminCookie)).status, 200);
+    assert.equal((await api('/transfers', rhCookie)).status, 200);
+    assert.equal(
+      (await api('/transfers/pending/D1-NO-EXISTE', adminCookie)).status,
+      404,
+    );
+    assert.equal(
+      (await api('/transfers/pending/D1-NO-EXISTE', chefCookie)).status,
+      403,
     );
   });
 

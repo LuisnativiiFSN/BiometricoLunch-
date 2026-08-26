@@ -39,9 +39,12 @@ export class ConsultationsService {
     const { start, end } = this.getMonthRange(month);
     const reservations = await this.prisma.mealReservation.findMany({
       where: {
-        employeeId: normalizedCode,
         mealType: LUNCH,
         mealDate: { gte: start, lt: end },
+        OR: [
+          { transferEmployeeId: normalizedCode },
+          { employeeId: normalizedCode, transferEmployeeId: null },
+        ],
       },
       include: {
         meal: true,
@@ -124,20 +127,22 @@ export class ConsultationsService {
     let cursor = new Date(monthStart);
 
     while (cursor < monthEnd) {
-      const day = cursor.getUTCDay();
-      const daysSinceMonday = day === 0 ? 6 : day - 1;
-      const calendarWeekStart = new Date(cursor);
-      calendarWeekStart.setUTCDate(cursor.getUTCDate() - daysSinceMonday);
-      const nextCalendarWeek = new Date(calendarWeekStart);
-      nextCalendarWeek.setUTCDate(calendarWeekStart.getUTCDate() + 7);
-      const displayStart = calendarWeekStart < monthStart
-        ? new Date(monthStart)
-        : calendarWeekStart;
-      const displayEndExclusive = nextCalendarWeek > monthEnd
-        ? new Date(monthEnd)
-        : nextCalendarWeek;
-      const displayEnd = new Date(displayEndExclusive);
-      displayEnd.setUTCDate(displayEnd.getUTCDate() - 1);
+      while (cursor < monthEnd && [0, 6].includes(cursor.getUTCDay())) {
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+
+      if (cursor >= monthEnd) break;
+
+      const displayStart = new Date(cursor);
+      const daysUntilFriday = 5 - displayStart.getUTCDay();
+      const displayEnd = new Date(displayStart);
+      displayEnd.setUTCDate(displayStart.getUTCDate() + daysUntilFriday);
+
+      if (displayEnd >= monthEnd) {
+        displayEnd.setTime(monthEnd.getTime());
+        displayEnd.setUTCDate(displayEnd.getUTCDate() - 1);
+      }
+
       const startDate = this.toDateOnly(displayStart);
       const endDate = this.toDateOnly(displayEnd);
       const count = items
@@ -145,7 +150,8 @@ export class ConsultationsService {
         .reduce((total, item) => total + item.quantity, 0);
 
       weeks.push({ startDate, endDate, count });
-      cursor = nextCalendarWeek;
+      cursor = new Date(displayEnd);
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
     }
 
     return weeks;

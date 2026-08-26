@@ -284,16 +284,92 @@ desactivarse ni cambiar su contraseña desde el portal.
 
 Permisos del portal:
 
-- Público: `Iniciar sesión` y `Consulta`.
-- Administrador: todas las páginas, solicitud manual y administración de usuarios.
-- Recursos Humanos: inicio, empleados, entregas, pendientes y consulta.
-- Chef: inicio, entregas, pendientes y consulta.
+- Público: `Encargar comida`, `Iniciar sesión` y `Consulta`.
+- Administrador: todas las páginas visibles, configuración del menú semanal, horarios de cierre y administración de usuarios.
+- Recursos Humanos: resultados semanales, resultados de hoy, menú semanal, horarios de cierre, encargar comida, empleados, entregas, pendientes, transferencias y consulta.
+- Chef: resultados semanales, resultados de hoy, entregas y pendientes. No tiene acceso a Encargar comida, Consulta, Empleados ni a la configuración del menú.
+
+## Menú y reservaciones semanales desde el portal
+
+Administrador y Recursos Humanos pueden publicar las opciones de almuerzo de la
+semana actual o de semanas futuras desde `Menú semanal`. La semana siempre
+comprende de lunes a viernes y requiere al menos una comida por día. Un plato
+que ya tenga reservaciones no puede quitarse del menú.
+
+Cuando se prepara una semana futura, el menú queda `Programado para el lunes`:
+no aparece anticipadamente en la reservación pública y se activa automáticamente
+al comenzar ese lunes. La activación solo ocurre si los cinco días están
+completos. El tablero de resultados conserva siempre el rango laboral de lunes
+a viernes, incluso cuando la semana comienza en un mes y termina en el siguiente.
+
+La página pública `Encargar comida` no requiere iniciar sesión. El empleado
+ingresa su código, revisa sus selecciones existentes y elige como máximo una
+comida por día. Al guardar, el sistema crea los días nuevos, actualiza los que
+cambiaron y cancela los que se dejaron sin selección, todo dentro de una sola
+operación. Antes de confirmar, el portal presenta el nombre, código y comidas
+seleccionadas. Las fechas anteriores, las reservaciones entregadas o transferidas
+y el día actual después del cierre quedan protegidos contra cambios. La hora se
+configura desde `Menú semanal` por Administrador o Recursos Humanos. Puede usarse
+una sola hora para toda la semana o una hora distinta para cada día. Si una
+semana todavía no tiene configuración guardada, se utiliza
+`MEAL_ORDER_CUTOFF_TIME` y su valor predeterminado es `08:00`.
+
+La información está dividida en dos pantallas para Administrador, Recursos
+Humanos y Chef. `Resultados semanales` muestra el total de reservaciones de la
+semana, el resumen por día, el total de cada plato y barras comparativas para
+preparar el reporte del Chef. Cada día también indica su hora de cierre y si aún
+está recibiendo solicitudes. `Resultados de hoy` contiene únicamente el gráfico
+de entregadas contra pendientes y la lista de personas que todavía no han
+reclamado su comida.
+
+Después de abrir el portal o iniciar sesión, la primera pantalla es `Encargar
+comida`. Las rutas
+de empleados validan la sesión y el rol en la API: únicamente Administrador y
+Recursos Humanos pueden consultarlas o modificarlas; Chef recibe una respuesta
+de acceso denegado aunque intente llamar el endpoint directamente.
+
+En `Pendientes` se puede buscar el código exacto de un empleado. La consulta se
+realiza en la API sobre las reservaciones del día que todavía no tienen una
+entrega aprobada; si no existe una coincidencia, el portal indica que ese código
+no tiene comida pendiente para hoy.
+
+### Transferencias de almuerzo
+
+La página `Transferencias` está disponible para los roles `ADMIN` y `RH`. El
+operador busca el código de quien reservó originalmente y el portal muestra
+todas sus comidas pendientes desde la fecha actual en adelante. Después elige
+una reservación e ingresa el código del beneficiario. La reservación conserva
+`employee_id` como evidencia de quién la creó y utiliza `transfer_employee` para
+definir quién recibirá y pagará la comida.
+
+Después de transferir de D1 hacia D2:
+
+- D1 deja de aparecer en pendientes y su código ya no puede retirar la comida.
+- D2 aparece como pendiente, genera la entrega y queda asociado al posible ticket.
+- la consulta mensual excluye la reservación de D1 y la suma al recuento de D2.
+- `meal_requests.employee_id` se guarda con el código de D2 cuando se entrega.
+- `audit_logs` guarda una acción `TRANSFER`, el usuario RH que la realizó, la
+  reservación afectada, el origen, el beneficiario y la fecha.
+
+La API rechaza fechas pasadas, comidas ya entregadas, una segunda transferencia,
+empleados inactivos, transferencias hacia la misma persona y beneficiarios que
+ya tengan una reservación propia o transferida para esa fecha. El endpoint
+`GET /api/transfers/pending/:employeeCode` devuelve las reservaciones que todavía
+pueden transferirse. `POST /api/transfers` realiza el movimiento y
+`GET /api/transfers` devuelve el historial. Los tres endpoints aceptan una
+sesión activa de Administrador o Recursos Humanos y rechazan al rol Chef.
 
 ### Consulta mensual para empleados
 
 La página pública `Consulta` permite ingresar un código de empleado y seleccionar
 el mes actual o cualquier mes anterior. La API rechaza meses futuros aunque se
 intente omitir la restricción del selector del portal.
+
+Cuando no existe una sesión activa, `Consulta` es la pantalla inicial del portal;
+`Iniciar sesión` sigue disponible en el menú para el personal autorizado. La
+gráfica semanal utiliza exclusivamente rangos laborales de lunes a viernes. No
+crea columnas para sábados o domingos y las reservaciones de fin de semana no se
+suman a las barras, aunque el total mensual conserva todos los registros.
 
 `GET /api/consultations/employees/:employeeCode/monthly?month=YYYY-MM` devuelve
 solamente código, nombre y datos de almuerzos; no expone correo, departamento,

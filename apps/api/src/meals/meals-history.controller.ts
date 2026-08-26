@@ -1,8 +1,16 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import type { Request } from 'express';
 import { CreateManualReservationDto } from './dto/create-manual-reservation.dto.js';
+import { CreateTodayMealDto } from './dto/create-today-meal.dto.js';
+import { PendingMealQueryDto } from './dto/pending-meal-query.dto.js';
 import { MealsService } from './meals.service.js';
 import { Roles } from '../auth/auth.decorators.js';
-import { UserRole } from '../auth/auth.constants.js';
+import {
+  UserRole,
+  type AuthenticatedUser,
+} from '../auth/auth.constants.js';
+
+type AuthenticatedRequest = Request & { user: AuthenticatedUser };
 
 @Roles(UserRole.ADMIN, UserRole.RH, UserRole.CHEF)
 @Controller('meals')
@@ -25,8 +33,8 @@ export class MealsHistoryController {
   }
 
   @Get('pending-today')
-  getPendingToday() {
-    return this.mealsService.getPendingToday();
+  getPendingToday(@Query() query: PendingMealQueryDto) {
+    return this.mealsService.getPendingToday(query.employeeCode);
   }
 
   @Get('summary/today')
@@ -37,6 +45,18 @@ export class MealsHistoryController {
   @Get('available-today')
   getAvailableToday() {
     return this.mealsService.getAvailableMealsToday();
+  }
+
+  @Post('available-today')
+  @Roles(UserRole.ADMIN)
+  createAvailableToday(
+    @Body() body: CreateTodayMealDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.mealsService.createAvailableMealToday(
+      body.name,
+      request.user.id,
+    );
   }
 
   @Post('reservations/manual')

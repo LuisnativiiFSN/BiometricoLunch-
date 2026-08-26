@@ -26,6 +26,7 @@ function formatDay(date: string) {
 
 function formatWeek(startDate: string, endDate: string) {
   const day = new Intl.DateTimeFormat('es-GT', { day: 'numeric' });
+  if (startDate === endDate) return day.format(parseDateOnly(startDate));
   return `${day.format(parseDateOnly(startDate))}–${day.format(parseDateOnly(endDate))}`;
 }
 
@@ -92,24 +93,26 @@ export function ConsultationPage() {
 
       {result && (
         <div className="consultation-results" aria-live="polite">
-          <section className="consultation-result-heading">
-            <div><span className="card-eyebrow">{monthLabel}</span><h2>{result.employee.name}</h2><span className="consultation-employee-code">Código {result.employee.code}</span></div>
-            <div className="consultation-metrics">
-              <article className="consultation-metric metric-total"><span>Total del mes</span><strong>{result.summary.totalLunches}</strong><small>almuerzos</small></article>
-              <article><span>Entregados</span><strong>{result.summary.delivered}</strong><small>reclamados</small></article>
-              <article><span>Pendientes</span><strong>{result.summary.pending}</strong><small>sin reclamar</small></article>
-            </div>
-          </section>
+          <div className="consultation-overview-grid">
+            <section className="consultation-chart-card" aria-labelledby="weekly-chart-title">
+              <div className="consultation-section-heading"><div><span className="card-eyebrow">Distribución semanal · lunes a viernes</span><h2 id="weekly-chart-title">Almuerzos por semana laboral</h2></div></div>
+              <div className="weekly-bars" role="img" aria-label={`Gráfico de almuerzos de lunes a viernes durante ${monthLabel}`}>
+                {result.weeks.map((week) => {
+                  const height = week.count === 0 ? 4 : Math.max(18, Math.round((week.count / maxWeeklyCount) * 100));
+                  return <div className="weekly-bar-column" key={week.startDate}><strong>{week.count}</strong><div className="weekly-bar-track"><i style={{ '--bar-height': `${height}%` } as CSSProperties} /></div><span>{formatWeek(week.startDate, week.endDate)}</span></div>;
+                })}
+              </div>
+            </section>
 
-          <section className="consultation-chart-card" aria-labelledby="weekly-chart-title">
-            <div className="consultation-section-heading"><div><span className="card-eyebrow">Distribución semanal</span><h2 id="weekly-chart-title">Almuerzos por semana</h2></div><span className="chart-month-total">{result.summary.totalLunches} en el mes</span></div>
-            <div className="weekly-bars" role="img" aria-label={`Gráfico de ${result.summary.totalLunches} almuerzos durante ${monthLabel}`}>
-              {result.weeks.map((week) => {
-                const height = week.count === 0 ? 4 : Math.max(18, Math.round((week.count / maxWeeklyCount) * 100));
-                return <div className="weekly-bar-column" key={week.startDate}><strong>{week.count}</strong><div className="weekly-bar-track"><i style={{ '--bar-height': `${height}%` } as CSSProperties} /></div><span>{formatWeek(week.startDate, week.endDate)}</span></div>;
-              })}
-            </div>
-          </section>
+            <aside className="consultation-summary-card">
+              <div className="consultation-person-summary"><span className="card-eyebrow">{monthLabel}</span><h2>{result.employee.name}</h2><span className="consultation-employee-code">Código {result.employee.code}</span></div>
+              <div className="consultation-metrics">
+                <article className="consultation-metric metric-total"><span>Total del mes</span><strong>{result.summary.totalLunches}</strong><small>almuerzos</small></article>
+                <article><span>Entregados</span><strong>{result.summary.delivered}</strong><small>reclamados</small></article>
+                <article><span>Pendientes</span><strong>{result.summary.pending}</strong><small>sin reclamar</small></article>
+              </div>
+            </aside>
+          </div>
 
           <section className="consultation-history-card" aria-labelledby="consultation-history-title">
             <div className="consultation-section-heading"><div><span className="card-eyebrow">Detalle del mes</span><h2 id="consultation-history-title">Almuerzos registrados</h2></div><span className="history-count">{result.items.length} registros</span></div>

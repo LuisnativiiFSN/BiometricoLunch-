@@ -28,6 +28,11 @@ export interface AvailableMeal {
   mealType: 'LUNCH';
 }
 
+export interface TodayMealCreationResult {
+  status: 'CREATED' | 'ALREADY_EXISTS' | 'REACTIVATED';
+  meal: AvailableMeal;
+}
+
 export interface ManualMealReservationResult {
   status: 'CREATED' | 'ALREADY_EXISTS';
   employee: {

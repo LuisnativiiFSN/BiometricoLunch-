@@ -3,23 +3,30 @@ import { AppShell } from './components/AppShell';
 import type { AppPage } from './components/AppShell';
 import { EmployeesPage } from './pages/EmployeesPage';
 import { HomePage } from './pages/HomePage';
-import { ManualMealRequestPage } from './pages/ManualMealRequestPage';
+import { DailyResultsPage } from './pages/DailyResultsPage';
 import { MealRequestsPage } from './pages/MealRequestsPage';
 import { PendingMealsPage } from './pages/PendingMealsPage';
 import { LoginPage } from './pages/LoginPage';
 import { ConsultationPage } from './pages/ConsultationPage';
 import { UsersPage } from './pages/UsersPage';
+import { MealTransfersPage } from './pages/MealTransfersPage';
+import { WeeklyMealOrderPage } from './pages/WeeklyMealOrderPage';
+import { WeeklyMenuAdminPage } from './pages/WeeklyMenuAdminPage';
 import { getCurrentSession, logout } from './services/auth.service';
 import type { AuthUser } from './types/auth';
 
 const pagesByRole: Record<AuthUser['role'], AppPage[]> = {
-  ADMIN: ['home', 'employees', 'deliveries', 'pending', 'manual', 'users', 'consultation'],
-  RH: ['home', 'employees', 'deliveries', 'pending', 'consultation'],
-  CHEF: ['home', 'deliveries', 'pending', 'consultation'],
+  ADMIN: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'employees', 'deliveries', 'pending', 'transfers', 'users', 'consultation'],
+  RH: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'employees', 'deliveries', 'pending', 'transfers', 'consultation'],
+  CHEF: ['home', 'daily-results', 'deliveries', 'pending'],
 };
 
+function getLandingPage(user: AuthUser | null): AppPage {
+  return user?.role === 'CHEF' ? 'home' : 'weekly-order';
+}
+
 function App() {
-  const [activePage, setActivePage] = useState<AppPage>('login');
+  const [activePage, setActivePage] = useState<AppPage>('weekly-order');
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isCheckingSession, setIsCheckingSession] = useState(true);
 
@@ -28,7 +35,7 @@ function App() {
     void getCurrentSession(controller.signal)
       .then(({ user: sessionUser }) => {
         setUser(sessionUser);
-        setActivePage('home');
+        setActivePage(getLandingPage(sessionUser));
       })
       .catch((error: unknown) => {
         if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -40,7 +47,7 @@ function App() {
 
     const handleUnauthorized = () => {
       setUser(null);
-      setActivePage('login');
+      setActivePage('weekly-order');
       setIsCheckingSession(false);
     };
     window.addEventListener('auth:unauthorized', handleUnauthorized);
@@ -52,15 +59,15 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const allowedPages = user ? pagesByRole[user.role] : ['login', 'consultation'];
+    const allowedPages = user ? pagesByRole[user.role] : ['login', 'weekly-order', 'consultation'];
     if (!allowedPages.includes(activePage)) {
-      setActivePage(user ? 'home' : 'login');
+      setActivePage(getLandingPage(user));
     }
   }, [activePage, user]);
 
   const handleAuthenticated = (authenticatedUser: AuthUser) => {
     setUser(authenticatedUser);
-    setActivePage('home');
+    setActivePage(getLandingPage(authenticatedUser));
   };
 
   const handleLogout = async () => {
@@ -68,7 +75,7 @@ function App() {
       await logout();
     } finally {
       setUser(null);
-      setActivePage('login');
+      setActivePage('weekly-order');
     }
   };
 
@@ -79,11 +86,14 @@ function App() {
   const currentPage = {
     login: <LoginPage onAuthenticated={handleAuthenticated} onOpenConsultation={() => setActivePage('consultation')} />,
     consultation: <ConsultationPage />,
+    'weekly-order': <WeeklyMealOrderPage />,
+    'weekly-menu': <WeeklyMenuAdminPage />,
     home: <HomePage />,
+    'daily-results': <DailyResultsPage />,
     employees: <EmployeesPage />,
     deliveries: <MealRequestsPage />,
     pending: <PendingMealsPage />,
-    manual: <ManualMealRequestPage />,
+    transfers: <MealTransfersPage />,
     users: <UsersPage />,
   }[activePage];
 
