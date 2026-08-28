@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import ExcelJS from 'exceljs';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MealRequestStatus, MealType } from './meal.constants.js';
@@ -870,8 +871,8 @@ export class MealsService {
     };
   }
 
-  async getPendingToday(employeeCode?: string) {
-    const mealDate = this.getLocalDate(new Date());
+  async getPendingToday(employeeCode?: string, now = new Date()) {
+    const mealDate = this.getLocalDate(now);
     const normalizedEmployeeCode = employeeCode?.trim();
     const reservations = await this.prisma.mealReservation.findMany({
       where: {
@@ -901,13 +902,18 @@ export class MealsService {
       return {
         employeeCode: beneficiary.employeeCode,
         name: beneficiary.name,
+        department: beneficiary.department,
         meal: reservation.meal.name,
       };
-    });
+    }).sort((left, right) =>
+      left.department.localeCompare(right.department, 'es', { sensitivity: 'base' }) ||
+      left.name.localeCompare(right.name, 'es', { sensitivity: 'base' }) ||
+      left.employeeCode.localeCompare(right.employeeCode, 'es', { sensitivity: 'base' }),
+    );
   }
 
-  async getTodaySummary() {
-    const mealDate = this.getLocalDate(new Date());
+  async getTodaySummary(now = new Date()) {
+    const { mealDate, cutoffTime, isClosed } = await this.getTodayCutoffState(now);
     const [reserved, collected, duplicateAttempts] =
       await this.prisma.$transaction([
         this.prisma.mealReservation.count({ where: { mealDate } }),
@@ -932,6 +938,275 @@ export class MealsService {
       collected,
       pending: reserved - collected,
       duplicateAttempts,
+      cutoffTime,
+      exportAvailable: isClosed,
+    };
+  }
+
+  async exportPendingToday(now = new Date()) {
+    const { mealDate, date, cutoffTime, isClosed } = await this.getTodayCutoffState(now);
+    if (!isClosed) {
+      throw new BadRequestException(
+        `La exportación estará disponible después del cierre de las ${cutoffTime}`,
+      );
+    }
+
+    const [pending, availableMeals] = await Promise.all([
+      this.getPendingToday(undefined, now),
+      this.prisma.meal.findMany({
+        where: {
+          availableDate: mealDate,
+          mealType: MealType.LUNCH,
+          active: true,
+        },
+        select: { name: true },
+        orderBy: { name: 'asc' },
+      }),
+    ]);
+    const countsByMeal = new Map<string, number>();
+    pending.forEach((item) => {
+      countsByMeal.set(item.meal, (countsByMeal.get(item.meal) ?? 0) + 1);
+    });
+    const mealNames = Array.from(
+      new Set([
+        ...availableMeals.map((meal) => meal.name),
+        ...countsByMeal.keys(),
+      ]),
+    );
+    const mealTotals = mealNames
+      .map((name) => ({ name, quantity: countsByMeal.get(name) ?? 0 }))
+      .sort(
+        (left, right) =>
+          right.quantity - left.quantity ||
+          left.name.localeCompare(right.name, 'es', { sensitivity: 'base' }),
+      );
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Comedor Fasani';
+    workbook.created = now;
+    workbook.modified = now;
+
+    const worksheet = workbook.addWorksheet('Pendientes', {
+      views: [{ state: 'frozen', ySplit: 2, showGridLines: false }],
+      pageSetup: {
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        margins: { left: 0.3, right: 0.3, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+      },
+    });
+    worksheet.columns = [
+      { key: 'employeeCode', width: 18 },
+      { key: 'name', width: 38 },
+      { key: 'department', width: 28 },
+      { key: 'meal', width: 42 },
+    ];
+
+    worksheet.mergeCells('A1:C1');
+    const titleCell = worksheet.getCell('A1');
+    titleCell.value = 'COMIDAS PENDIENTES DE ENTREGA';
+    titleCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 15 };
+    titleCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    const titleDateCell = worksheet.getCell('D1');
+    titleDateCell.value = mealDate;
+    titleDateCell.numFmt = 'dddd d "de" mmmm "de" yyyy';
+    titleDateCell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    titleDateCell.alignment = { horizontal: 'right', vertical: 'middle' };
+    for (let column = 1; column <= 4; column += 1) {
+      worksheet.getCell(1, column).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF073B3A' },
+      };
+    }
+    worksheet.getRow(1).height = 32;
+
+    const headerRow = worksheet.getRow(2);
+    headerRow.values = ['Código', 'Nombre del empleado', 'Departamento', 'Comida solicitada'];
+    headerRow.height = 24;
+    headerRow.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF009C95' } };
+      cell.border = {
+        bottom: { style: 'medium', color: { argb: 'FF087F79' } },
+      };
+    });
+
+    let previousDepartment = '';
+    let departmentGroup = -1;
+    pending.forEach((item, index) => {
+      const department = item.department.trim() || 'Sin departamento';
+      const isNewDepartment =
+        index === 0 ||
+        department.localeCompare(previousDepartment, 'es', {
+          sensitivity: 'base',
+        }) !== 0;
+      if (isNewDepartment) {
+        departmentGroup += 1;
+        previousDepartment = department;
+      }
+      const row = worksheet.addRow({
+        employeeCode: item.employeeCode,
+        name: item.name,
+        department,
+        meal: item.meal,
+      });
+      row.height = 22;
+      row.eachCell((cell, columnNumber) => {
+        cell.alignment = {
+          horizontal: 'left',
+          vertical: 'middle',
+          wrapText: columnNumber === 4,
+        };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: {
+            argb: departmentGroup % 2 === 0 ? 'FFF2FAF9' : 'FFFFFFFF',
+          },
+        };
+        cell.border = {
+          ...(isNewDepartment
+            ? { top: { style: 'medium' as const, color: { argb: 'FF7CC8C3' } } }
+            : {}),
+          bottom: { style: 'hair', color: { argb: 'FFD5E8E6' } },
+        };
+      });
+      row.getCell(3).font = { bold: isNewDepartment, color: { argb: 'FF075D59' } };
+    });
+
+    worksheet.autoFilter = { from: 'A2', to: 'D2' };
+    const finalRow = Math.max(2, worksheet.rowCount);
+    worksheet.getColumn(1).numFmt = '@';
+    worksheet.getColumn(4).alignment = { wrapText: true };
+    worksheet.pageSetup.printArea = `A1:D${finalRow}`;
+    worksheet.headerFooter.oddFooter = `Pendientes del ${date} · Página &P de &N`;
+
+    const summarySheet = workbook.addWorksheet('Resumen del día', {
+      views: [{ state: 'frozen', ySplit: 6, showGridLines: false }],
+      pageSetup: {
+        orientation: 'portrait',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 1,
+        margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 },
+      },
+    });
+    summarySheet.columns = [
+      { width: 42 },
+      { width: 14 },
+      { width: 16 },
+      { width: 30 },
+    ];
+    summarySheet.mergeCells('A1:C1');
+    const summaryTitle = summarySheet.getCell('A1');
+    summaryTitle.value = 'RESUMEN DE PRODUCCIÓN';
+    summaryTitle.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 15 };
+    summaryTitle.alignment = { horizontal: 'left', vertical: 'middle' };
+    const summaryDate = summarySheet.getCell('D1');
+    summaryDate.value = mealDate;
+    summaryDate.numFmt = 'dddd d "de" mmmm "de" yyyy';
+    summaryDate.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+    summaryDate.alignment = { horizontal: 'right', vertical: 'middle' };
+    for (let column = 1; column <= 4; column += 1) {
+      summarySheet.getCell(1, column).fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF073B3A' },
+      };
+    }
+    summarySheet.getRow(1).height = 32;
+    summarySheet.getRow(2).height = 8;
+
+    summarySheet.mergeCells('A3:C3');
+    const totalLabel = summarySheet.getCell('A3');
+    totalLabel.value = 'TOTAL DE PLATOS PENDIENTES';
+    totalLabel.font = { bold: true, color: { argb: 'FF075D59' }, size: 12 };
+    totalLabel.alignment = { horizontal: 'left', vertical: 'middle' };
+    totalLabel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDF3F1' } };
+    const totalValue = summarySheet.getCell('D3');
+    totalValue.value = pending.length;
+    totalValue.numFmt = '#,##0';
+    totalValue.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 18 };
+    totalValue.alignment = { horizontal: 'center', vertical: 'middle' };
+    totalValue.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF009C95' } };
+    summarySheet.getRow(3).height = 34;
+    summarySheet.getRow(4).height = 8;
+
+    summarySheet.mergeCells('A5:D5');
+    const sectionTitle = summarySheet.getCell('A5');
+    sectionTitle.value = 'CANTIDADES POR COMIDA';
+    sectionTitle.font = { bold: true, color: { argb: 'FF075D59' }, size: 11 };
+    sectionTitle.alignment = { horizontal: 'left', vertical: 'middle' };
+    sectionTitle.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEAF7F6' } };
+    summarySheet.getRow(5).height = 24;
+
+    const summaryHeader = summarySheet.getRow(6);
+    summaryHeader.values = ['Comida', 'Cantidad', '% del total', 'Distribución'];
+    summaryHeader.height = 24;
+    summaryHeader.eachCell((cell) => {
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { horizontal: 'left', vertical: 'middle' };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF009C95' } };
+      cell.border = { bottom: { style: 'medium', color: { argb: 'FF087F79' } } };
+    });
+
+    const maxQuantity = Math.max(0, ...mealTotals.map((meal) => meal.quantity));
+    const firstSummaryRow = 7;
+    const lastSummaryRow = firstSummaryRow + mealTotals.length - 1;
+    if (mealTotals.length === 0) {
+      summarySheet.mergeCells('A7:D7');
+      const emptyCell = summarySheet.getCell('A7');
+      emptyCell.value = 'No hay opciones de comida disponibles para este día';
+      emptyCell.font = { italic: true, color: { argb: 'FF64748B' } };
+      emptyCell.alignment = { horizontal: 'center', vertical: 'middle' };
+      emptyCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
+      summarySheet.getRow(7).height = 28;
+    } else {
+      mealTotals.forEach((meal, index) => {
+        const rowNumber = firstSummaryRow + index;
+        const barLength =
+          maxQuantity === 0 ? 0 : Math.round((meal.quantity / maxQuantity) * 20);
+        const row = summarySheet.getRow(rowNumber);
+        row.values = [meal.name, meal.quantity];
+        row.getCell(3).value = {
+          formula: `IF($D$3=0,0,B${rowNumber}/$D$3)`,
+          result: pending.length === 0 ? 0 : meal.quantity / pending.length,
+        };
+        row.getCell(3).numFmt = '0%';
+        row.getCell(4).value = {
+          formula: `IF(MAX($B$${firstSummaryRow}:$B$${lastSummaryRow})=0,"",REPT("■",ROUND(B${rowNumber}/MAX($B$${firstSummaryRow}:$B$${lastSummaryRow})*20,0)))`,
+          result: '■'.repeat(barLength),
+        };
+        row.height = 24;
+        row.eachCell((cell, columnNumber) => {
+          cell.alignment = {
+            horizontal: columnNumber === 1 || columnNumber === 4 ? 'left' : 'center',
+            vertical: 'middle',
+            wrapText: columnNumber === 1,
+          };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: index % 2 === 0 ? 'FFF2FAF9' : 'FFFFFFFF' },
+          };
+          cell.border = { bottom: { style: 'hair', color: { argb: 'FFD5E8E6' } } };
+        });
+        row.getCell(2).font = { bold: true, color: { argb: 'FF075D59' }, size: 12 };
+        row.getCell(4).font = { bold: true, color: { argb: 'FF009C95' } };
+      });
+    }
+
+    const summaryFinalRow = Math.max(7, summarySheet.rowCount);
+    summarySheet.autoFilter = { from: 'A6', to: 'D6' };
+    summarySheet.pageSetup.printArea = `A1:D${summaryFinalRow}`;
+    summarySheet.headerFooter.oddFooter = `Resumen del ${date} · Página &P de &N`;
+
+    const content = await workbook.xlsx.writeBuffer();
+    return {
+      fileName: `pendientes-comida-${date}.xlsx`,
+      buffer: Buffer.from(content),
     };
   }
 
@@ -1028,6 +1303,23 @@ export class MealsService {
     if (weekStart < currentWeekStart) {
       throw new BadRequestException('No se puede modificar el menú de una semana anterior');
     }
+  }
+
+  private async getTodayCutoffState(now: Date) {
+    const mealDate = this.getLocalDate(now);
+    const date = this.getDateOnly(mealDate);
+    const storedCutoff = await this.prisma.mealOrderCutoff.findUnique({
+      where: { mealDate },
+      select: { cutoffTime: true },
+    });
+    const cutoffTime = storedCutoff?.cutoffTime ?? this.getDefaultOrderCutoffTime();
+
+    return {
+      mealDate,
+      date,
+      cutoffTime,
+      isClosed: this.getReservationLockReason(date, now, cutoffTime) !== null,
+    };
   }
 
   private getDefaultOrderCutoffTime() {

@@ -322,6 +322,12 @@ está recibiendo solicitudes. `Resultados de hoy` contiene únicamente el gráfi
 de entregadas contra pendientes y la lista de personas que todavía no han
 reclamado su comida.
 
+Después de la hora de cierre configurada para el día, `Resultados de hoy`
+habilita la descarga de los pendientes en formato Excel. El archivo incluye
+departamento, código, nombre y comida solicitada; se ordena por departamento y
+luego por nombre. La API también valida el horario, por lo que la exportación no
+puede forzarse antes del cierre mediante una llamada directa.
+
 Después de abrir el portal o iniciar sesión, la primera pantalla es `Encargar
 comida`. Las rutas
 de empleados validan la sesión y el rol en la API: únicamente Administrador y

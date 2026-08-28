@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
+import ExcelJS from 'exceljs';
 import {
   MealRequestStatus,
   MealType,
@@ -96,13 +97,13 @@ async function cleanup() {
   });
 }
 
-function createEmployee(suffix, active = true) {
+function createEmployee(suffix, active = true, department = 'Pruebas') {
   return prisma.employee.create({
     data: {
       employeeCode: `${TEST_PREFIX}${suffix}`,
       name: `Empleado automatico ${suffix}`,
       email: `${suffix.toLowerCase()}@pruebas.local`,
-      department: 'Pruebas',
+      department,
       active,
     },
   });
@@ -308,12 +309,99 @@ describe('POST /kiosk/request-meal - reglas de entrega', () => {
     assert.equal(pendingByCode.length, 1);
     assert.equal(pendingByCode[0].employeeCode, pendingEmployee.employeeCode);
     assert.deepEqual(collectedByCode, []);
-    assert.deepEqual(summary, {
-      reserved,
-      collected,
-      pending: reserved - collected,
-      duplicateAttempts,
+    assert.equal(summary.reserved, reserved);
+    assert.equal(summary.collected, collected);
+    assert.equal(summary.pending, reserved - collected);
+    assert.equal(summary.duplicateAttempts, duplicateAttempts);
+    assert.match(summary.cutoffTime, /^\d{2}:\d{2}$/);
+    assert.equal(typeof summary.exportAvailable, 'boolean');
+  });
+
+  test('exporta pendientes a Excel después del cierre y los ordena por departamento', async () => {
+    const futureMonday = new Date('2099-01-08T00:00:00.000Z');
+    while (futureMonday.getUTCDay() !== 1) {
+      futureMonday.setUTCDate(futureMonday.getUTCDate() + 1);
+    }
+    const beforeCutoff = new Date(futureMonday);
+    beforeCutoff.setUTCHours(13, 59, 0, 0);
+    const atCutoff = new Date(futureMonday);
+    atCutoff.setUTCHours(14, 0, 0, 0);
+
+    await prisma.mealOrderCutoff.upsert({
+      where: { mealDate: futureMonday },
+      update: { cutoffTime: '08:00' },
+      create: { mealDate: futureMonday, cutoffTime: '08:00' },
     });
+    const ventas = await createEmployee('EXPORT-VENTAS', true, 'Ventas');
+    const administracion = await createEmployee('EXPORT-ADMIN', true, 'Administración');
+    await createReservation(ventas.employeeCode, 'POLLO EXPORTADO', futureMonday);
+    await createReservation(administracion.employeeCode, 'PASTA EXPORTADA', futureMonday);
+    await prisma.meal.create({
+      data: {
+        name: `${TEST_PREFIX}SOPA SIN PEDIDOS`,
+        availableDate: futureMonday,
+        mealType: MealType.LUNCH,
+      },
+    });
+
+    await assert.rejects(
+      mealsService.exportPendingToday(beforeCutoff),
+      /disponible después del cierre de las 08:00/,
+    );
+
+    const exported = await mealsService.exportPendingToday(atCutoff);
+    assert.match(exported.fileName, /^pendientes-comida-\d{4}-\d{2}-\d{2}\.xlsx$/);
+    assert.ok(exported.buffer.length > 0);
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(exported.buffer);
+    const worksheet = workbook.getWorksheet('Pendientes');
+    assert.ok(worksheet);
+    assert.equal(workbook.worksheets.length, 2);
+    assert.equal(worksheet.getCell('A1').value, 'COMIDAS PENDIENTES DE ENTREGA');
+    assert.ok(worksheet.getCell('D1').value instanceof Date);
+    assert.deepEqual(worksheet.getRow(2).values.slice(1), [
+      'Código',
+      'Nombre del empleado',
+      'Departamento',
+      'Comida solicitada',
+    ]);
+    assert.deepEqual(
+      [worksheet.getCell('C3').value, worksheet.getCell('C4').value],
+      ['Administración', 'Ventas'],
+    );
+    assert.deepEqual(
+      [worksheet.getCell('A3').value, worksheet.getCell('A4').value],
+      [administracion.employeeCode, ventas.employeeCode],
+    );
+    assert.deepEqual(
+      [worksheet.getCell('D3').value, worksheet.getCell('D4').value],
+      [`${TEST_PREFIX}PASTA EXPORTADA`, `${TEST_PREFIX}POLLO EXPORTADO`],
+    );
+    assert.equal(worksheet.autoFilter, 'A2:D2');
+
+    const summarySheet = workbook.getWorksheet('Resumen del día');
+    assert.ok(summarySheet);
+    assert.equal(summarySheet.getCell('A1').value, 'RESUMEN DE PRODUCCIÓN');
+    assert.equal(summarySheet.getCell('D3').value, 2);
+    assert.deepEqual(summarySheet.getRow(6).values.slice(1), [
+      'Comida',
+      'Cantidad',
+      '% del total',
+      'Distribución',
+    ]);
+    assert.deepEqual(
+      [7, 8, 9].map((row) => [
+        summarySheet.getCell(`A${row}`).value,
+        summarySheet.getCell(`B${row}`).value,
+      ]),
+      [
+        [`${TEST_PREFIX}PASTA EXPORTADA`, 1],
+        [`${TEST_PREFIX}POLLO EXPORTADO`, 1],
+        [`${TEST_PREFIX}SOPA SIN PEDIDOS`, 0],
+      ],
+    );
+    assert.equal(summarySheet.autoFilter, 'A6:D6');
   });
 });
 

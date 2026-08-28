@@ -6,7 +6,7 @@ import type {
   TodayMealCreationResult,
   TodayMealSummary,
 } from '../types/meal-history';
-import { apiRequest } from './api';
+import { apiDownload, apiRequest } from './api';
 import type {
   EmployeeWeeklySelections,
   SavedWeeklySelections,
@@ -39,6 +39,10 @@ export function getPendingToday(employeeCode = '', signal?: AbortSignal) {
 
 export function getTodayMealSummary(signal?: AbortSignal) {
   return apiRequest<TodayMealSummary>('/meals/summary/today', { signal });
+}
+
+export function downloadPendingTodayExport() {
+  return apiDownload('/meals/pending-today/export');
 }
 
 export function getAvailableMealsToday(signal?: AbortSignal) {

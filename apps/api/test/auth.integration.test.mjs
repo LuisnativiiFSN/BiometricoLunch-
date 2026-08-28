@@ -112,6 +112,7 @@ after(async () => {
 describe('autenticación y permisos por rol', () => {
   test('bloquea las rutas internas sin sesión y mantiene salud/kiosco públicos', async () => {
     assert.equal((await api('/meals/pending-today')).status, 401);
+    assert.equal((await api('/meals/pending-today/export')).status, 401);
     assert.equal((await api('/employees')).status, 401);
     assert.equal((await api('/health')).status, 200);
     assert.equal(

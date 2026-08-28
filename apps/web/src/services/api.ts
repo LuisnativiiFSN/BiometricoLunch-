@@ -72,3 +72,40 @@ export async function apiRequest<T>(
 
   return (await response.json()) as T;
 }
+
+export async function apiDownload(path: string): Promise<{ blob: Blob; fileName: string }> {
+  let response: Response;
+
+  try {
+    response = await fetch(`${API_URL}${path}`, { credentials: 'include' });
+  } catch {
+    throw new ApiError(
+      'No se pudo conectar con la API. Verifica que NestJS este funcionando.',
+      0,
+    );
+  }
+
+  if (!response.ok) {
+    let body: ApiErrorBody | undefined;
+    try {
+      body = (await response.json()) as ApiErrorBody;
+    } catch {
+      body = undefined;
+    }
+    const message = Array.isArray(body?.message)
+      ? body.message.join('. ')
+      : body?.message;
+    if (response.status === 401) {
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
+    throw new ApiError(
+      message ?? 'No fue posible descargar el archivo',
+      response.status,
+    );
+  }
+
+  const disposition = response.headers.get('Content-Disposition') ?? '';
+  const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+    ?? 'pendientes-comida.xlsx';
+  return { blob: await response.blob(), fileName };
+}

@@ -3310,6 +3310,63 @@ svg {
   font-size: .88rem;
 }
 
+.dashboard-header-actions {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pending-export-status {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: -8px 0 20px;
+  padding: 13px 16px;
+  border: 1px solid rgb(210 154 53 / 22%);
+  border-radius: 13px;
+  background: rgb(210 154 53 / 7%);
+}
+
+.pending-export-status > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  color: #e5b75e;
+  background: rgb(210 154 53 / 13%);
+  font-weight: 900;
+}
+
+.pending-export-status strong {
+  display: block;
+  color: #d9c59e;
+  font-size: .74rem;
+}
+
+.pending-export-status p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: .65rem;
+}
+
+.pending-export-status.is-available {
+  border-color: rgb(0 179 179 / 24%);
+  background: rgb(0 179 179 / 7%);
+}
+
+.pending-export-status.is-available > span {
+  color: #70e1dc;
+  background: rgb(0 179 179 / 13%);
+}
+
+.pending-export-status.is-available strong {
+  color: #9de8e4;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.32fr) minmax(360px, .68fr);
@@ -4028,6 +4085,12 @@ svg {
 
   .daily-results-date {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dashboard-header-actions {
+    width: 100%;
+    align-items: stretch;
     flex-direction: column;
   }
 

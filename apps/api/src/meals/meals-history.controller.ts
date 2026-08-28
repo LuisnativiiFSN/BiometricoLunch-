@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, StreamableFile } from '@nestjs/common';
 import type { Request } from 'express';
 import { CreateManualReservationDto } from './dto/create-manual-reservation.dto.js';
 import { CreateTodayMealDto } from './dto/create-today-meal.dto.js';
@@ -35,6 +35,16 @@ export class MealsHistoryController {
   @Get('pending-today')
   getPendingToday(@Query() query: PendingMealQueryDto) {
     return this.mealsService.getPendingToday(query.employeeCode);
+  }
+
+  @Get('pending-today/export')
+  async exportPendingToday() {
+    const exported = await this.mealsService.exportPendingToday();
+    return new StreamableFile(exported.buffer, {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      disposition: `attachment; filename="${exported.fileName}"`,
+      length: exported.buffer.length,
+    });
   }
 
   @Get('summary/today')
