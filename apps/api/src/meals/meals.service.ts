@@ -1,10 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import ExcelJS from 'exceljs';
 import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { MealRequestStatus, MealType } from './meal.constants.js';
 
 const MEAL_TIME_ZONE = 'America/Guatemala';
+const PUBLIC_WEEKLY_ORDER_CUTOFF = '09:30';
+const RH_ADJUSTMENT_ACTIONS = ['CREATE', 'UPDATE', 'DELETE'];
 
 @Injectable()
 export class MealsService {
@@ -364,8 +371,11 @@ export class MealsService {
     };
   }
 
-  async getCurrentWeeklyMenu() {
-    return this.getWeeklyMenu(this.getDateOnly(this.getCurrentWorkWeek().start));
+  async getCurrentWeeklyMenu(now = new Date()) {
+    return this.getWeeklyMenu(
+      this.getDateOnly(this.getCurrentWorkWeek(now).start),
+      now,
+    );
   }
 
   async getWeeklyMenuForAdministration(weekStart: string) {
@@ -374,7 +384,7 @@ export class MealsService {
     return this.getWeeklyMenu(weekStart);
   }
 
-  private async getWeeklyMenu(weekStart: string) {
+  private async getWeeklyMenu(weekStart: string, now = new Date()) {
     const week = this.getWorkWeekFromStart(weekStart);
     const [meals, storedCutoffs] = await this.prisma.$transaction([
       this.prisma.meal.findMany({
@@ -397,26 +407,26 @@ export class MealsService {
       mealsByDate.set(date, [...(mealsByDate.get(date) ?? []), meal]);
     }
 
-    const cutoffByDate = new Map(
-      storedCutoffs.map((cutoff) => [this.getDateOnly(cutoff.mealDate), cutoff.cutoffTime]),
+    const mondayCutoff = storedCutoffs.find(
+      (cutoff) => this.getDateOnly(cutoff.mealDate) === weekStart,
+    )?.cutoffTime ?? PUBLIC_WEEKLY_ORDER_CUTOFF;
+    const publicOrderingLockReason = this.getWeeklyOrderingLockReason(
+      now,
+      mondayCutoff,
     );
-    const fallbackCutoff = this.getDefaultOrderCutoffTime();
     const days = week.dates.map((date, index) => {
-      const cutoffTime = cutoffByDate.get(date) ?? fallbackCutoff;
-      const lockReason = this.getReservationLockReason(date, new Date(), cutoffTime);
       return {
         date,
         dayName: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'][index],
-        cutoffTime,
-        canModify: lockReason === null,
-        lockReason,
+        cutoffTime: mondayCutoff,
+        canModify: publicOrderingLockReason === null,
+        lockReason: publicOrderingLockReason,
         meals: (mealsByDate.get(date) ?? []).map((meal) => this.toAvailableMeal(meal)),
       };
     });
 
-    const uniqueCutoffs = new Set(days.map((day) => day.cutoffTime));
     const isReady = days.every((day) => day.meals.length > 0);
-    const currentWeekStart = this.getCurrentWorkWeek().start;
+    const currentWeekStart = this.getCurrentWorkWeek(now).start;
     const publicationStatus = !isReady
       ? ('PENDING' as const)
       : week.start > currentWeekStart
@@ -425,8 +435,12 @@ export class MealsService {
     return {
       weekStart: this.getDateOnly(week.start),
       weekEnd: this.getDateOnly(week.end),
-      cutoffMode: uniqueCutoffs.size === 1 ? ('GENERAL' as const) : ('DAILY' as const),
-      orderingCutoffTime: uniqueCutoffs.size === 1 ? days[0].cutoffTime : null,
+      cutoffMode: 'GENERAL' as const,
+      orderingCutoffTime: mondayCutoff,
+      publicOrderingCutoffTime: mondayCutoff,
+      publicOrderingOpen:
+        publicationStatus === 'PUBLISHED' && publicOrderingLockReason === null,
+      publicOrderingLockReason,
       isReady,
       isPublished: publicationStatus === 'PUBLISHED',
       publicationStatus,
@@ -468,6 +482,14 @@ export class MealsService {
     now = new Date(),
   ) {
     const employee = await this.findActiveEmployee(employeeCode);
+    const publicCutoff = await this.getPublicWeeklyOrderingCutoff(now);
+    const publicOrderingLockReason = this.getWeeklyOrderingLockReason(
+      now,
+      publicCutoff,
+    );
+    if (publicOrderingLockReason) {
+      throw new BadRequestException(publicOrderingLockReason);
+    }
     const week = this.getCurrentWorkWeek(now);
     const validDates = new Set(week.dates);
     const selectedDates = new Set(selections.map((selection) => selection.date));
@@ -533,32 +555,6 @@ export class MealsService {
       throw new BadRequestException(
         `La reservación del ${this.getDateOnly(changingProtectedReservation.mealDate)} ya fue transferida o entregada y no puede modificarse`,
       );
-    }
-
-    const existingByDate = new Map(
-      existing.map((reservation) => [this.getDateOnly(reservation.mealDate), reservation]),
-    );
-    const changedDates = new Set<string>();
-    for (const reservation of existing) {
-      const date = this.getDateOnly(reservation.mealDate);
-      if (requestedByDate.get(date) !== reservation.mealId) changedDates.add(date);
-    }
-    for (const selection of selections) {
-      if (!existingByDate.has(selection.date)) changedDates.add(selection.date);
-    }
-    const storedCutoffs = await this.prisma.mealOrderCutoff.findMany({
-      where: { mealDate: { gte: week.start, lte: week.end } },
-    });
-    const cutoffByDate = new Map(
-      storedCutoffs.map((cutoff) => [this.getDateOnly(cutoff.mealDate), cutoff.cutoffTime]),
-    );
-    for (const date of changedDates) {
-      const lockReason = this.getReservationLockReason(
-        date,
-        now,
-        cutoffByDate.get(date) ?? this.getDefaultOrderCutoffTime(),
-      );
-      if (lockReason) throw new BadRequestException(lockReason);
     }
 
     let created = 0;
@@ -638,6 +634,402 @@ export class MealsService {
       ...saved,
       changes: { created, updated, deleted },
     };
+  }
+
+  async getCurrentWeekMealAdjustment(employeeCode: string, now = new Date()) {
+    const employee = await this.findActiveEmployee(employeeCode);
+    const week = this.getCurrentWorkWeek(now);
+    const [meals, reservations, receivedTransfers] = await this.prisma.$transaction([
+      this.prisma.meal.findMany({
+        where: {
+          availableDate: { gte: week.start, lte: week.end },
+          mealType: MealType.LUNCH,
+          active: true,
+        },
+        orderBy: [{ availableDate: 'asc' }, { name: 'asc' }],
+      }),
+      this.prisma.mealReservation.findMany({
+        where: {
+          employeeId: employee.employeeCode,
+          mealDate: { gte: week.start, lte: week.end },
+          mealType: MealType.LUNCH,
+        },
+        include: {
+          meal: true,
+          transferEmployee: { select: { employeeCode: true, name: true } },
+          mealRequests: {
+            where: { status: MealRequestStatus.APPROVED },
+            select: { id: true },
+            take: 1,
+          },
+        },
+        orderBy: { mealDate: 'asc' },
+      }),
+      this.prisma.mealReservation.findMany({
+        where: {
+          transferEmployeeId: employee.employeeCode,
+          mealDate: { gte: week.start, lte: week.end },
+          mealType: MealType.LUNCH,
+        },
+        select: { mealDate: true },
+      }),
+    ]);
+    const mealsByDate = new Map<string, typeof meals>();
+    for (const meal of meals) {
+      const date = this.getDateOnly(meal.availableDate);
+      mealsByDate.set(date, [...(mealsByDate.get(date) ?? []), meal]);
+    }
+    const reservationsByDate = new Map(
+      reservations.map((reservation) => [
+        this.getDateOnly(reservation.mealDate),
+        reservation,
+      ]),
+    );
+    const receivedTransferDates = new Set(
+      receivedTransfers.map((reservation) =>
+        this.getDateOnly(reservation.mealDate)),
+    );
+    const today = this.getDateOnly(this.getLocalDate(now));
+
+    return {
+      employee: {
+        code: employee.employeeCode,
+        name: employee.name,
+        department: employee.department,
+      },
+      weekStart: this.getDateOnly(week.start),
+      weekEnd: this.getDateOnly(week.end),
+      days: week.dates.map((date, index) => {
+        const reservation = reservationsByDate.get(date);
+        let lockReason: string | null = null;
+        if (date < today) {
+          lockReason = 'El día ya pasó y no puede modificarse';
+        } else if (receivedTransferDates.has(date)) {
+          lockReason = 'El empleado ya tiene una comida recibida por transferencia';
+        } else if (reservation?.transferEmployeeId) {
+          lockReason = `La reservación fue transferida a ${reservation.transferEmployee?.name ?? reservation.transferEmployeeId}`;
+        } else if (reservation && reservation.mealRequests.length > 0) {
+          lockReason = 'La comida ya fue entregada y no puede modificarse';
+        } else if ((mealsByDate.get(date) ?? []).length === 0) {
+          lockReason = 'No hay comidas publicadas para este día';
+        }
+
+        return {
+          date,
+          dayName: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'][index],
+          canModify: lockReason === null,
+          lockReason,
+          meals: (mealsByDate.get(date) ?? []).map((meal) =>
+            this.toAvailableMeal(meal),
+          ),
+          reservation: reservation
+            ? {
+                id: reservation.id,
+                mealId: reservation.mealId,
+                mealName: reservation.meal.name,
+                canModify: lockReason === null,
+                lockReason,
+              }
+            : null,
+        };
+      }),
+    };
+  }
+
+  async adjustCurrentWeekReservation(
+    employeeCode: string,
+    adjustment: {
+      date: string;
+      action: 'ADD' | 'CHANGE' | 'CANCEL';
+      mealId?: string;
+      reason: string;
+    },
+    actor: { id: string; username: string },
+    now = new Date(),
+  ) {
+    const employee = await this.findActiveEmployee(employeeCode);
+    const week = this.getCurrentWorkWeek(now);
+    if (!week.dates.includes(adjustment.date)) {
+      throw new BadRequestException(
+        'Solo puedes modificar reservaciones de la semana actual',
+      );
+    }
+    const reason = adjustment.reason.trim().replace(/\s+/g, ' ');
+    if (reason.length < 5) {
+      throw new BadRequestException(
+        'Debes indicar un motivo de al menos 5 caracteres',
+      );
+    }
+    const mealDate = new Date(`${adjustment.date}T00:00:00.000Z`);
+    const today = this.getLocalDate(now);
+    if (mealDate < today) {
+      throw new BadRequestException(
+        'No se pueden modificar reservaciones de días anteriores',
+      );
+    }
+
+    return this.prisma.$transaction(
+      async (transaction) => {
+        const reservation = await transaction.mealReservation.findUnique({
+          where: {
+            employeeId_mealDate_mealType: {
+              employeeId: employee.employeeCode,
+              mealDate,
+              mealType: MealType.LUNCH,
+            },
+          },
+          include: {
+            meal: true,
+            transferEmployee: { select: { employeeCode: true, name: true } },
+            mealRequests: {
+              where: { status: MealRequestStatus.APPROVED },
+              select: { id: true },
+              take: 1,
+            },
+          },
+        });
+        const receivedTransfer = await transaction.mealReservation.findFirst({
+          where: {
+            transferEmployeeId: employee.employeeCode,
+            mealDate,
+            mealType: MealType.LUNCH,
+          },
+          select: { id: true },
+        });
+
+        if (adjustment.action === 'ADD' && reservation) {
+          throw new ConflictException(
+            'El empleado ya tiene una reservación para ese día; utiliza la opción Cambiar comida',
+          );
+        }
+        if (adjustment.action === 'ADD' && receivedTransfer) {
+          throw new ConflictException(
+            'El empleado ya tiene una comida recibida por transferencia para ese día',
+          );
+        }
+        if (adjustment.action !== 'ADD' && !reservation) {
+          throw new NotFoundException(
+            'El empleado no tiene una reservación para esa fecha; utiliza la opción Agregar almuerzo',
+          );
+        }
+        if (reservation?.transferEmployeeId) {
+          throw new ConflictException(
+            'La reservación fue transferida y ya no puede modificarse',
+          );
+        }
+        if (reservation && reservation.mealRequests.length > 0) {
+          throw new ConflictException(
+            'La comida ya fue entregada y no puede modificarse',
+          );
+        }
+
+        const previousValues = {
+          employeeCode: employee.employeeCode,
+          employeeName: employee.name,
+          department: employee.department,
+          date: adjustment.date,
+          mealId: reservation?.mealId ?? null,
+          mealName: reservation?.meal.name ?? null,
+        };
+
+        if (adjustment.action === 'CANCEL') {
+          if (!reservation) {
+            throw new NotFoundException(
+              'El empleado no tiene una reservación para cancelar',
+            );
+          }
+          await transaction.mealReservation.delete({
+            where: { id: reservation.id },
+          });
+          await transaction.auditLog.create({
+            data: {
+              entityName: 'meal_reservations',
+              entityId: reservation.id,
+              action: 'DELETE',
+              actorUserId: actor.id,
+              previousValues: JSON.stringify(previousValues),
+              newValues: JSON.stringify({
+                cancelled: true,
+                source: 'RH_ADJUSTMENT',
+                adjustmentType: 'CANCEL',
+                reason,
+                modifiedBy: actor.username,
+              }),
+            },
+          });
+
+          return {
+            status: 'CANCELLED' as const,
+            employee: previousValues,
+            previousMeal: reservation.meal.name,
+            newMeal: null,
+            reason,
+            modifiedBy: actor.username,
+          };
+        }
+
+        if (!adjustment.mealId) {
+          throw new BadRequestException(
+            'Debes seleccionar la nueva comida',
+          );
+        }
+        const newMeal = await transaction.meal.findFirst({
+          where: {
+            id: adjustment.mealId,
+            availableDate: mealDate,
+            mealType: MealType.LUNCH,
+            active: true,
+          },
+        });
+        if (!newMeal) {
+          throw new BadRequestException(
+            'La nueva comida no está disponible para la fecha seleccionada',
+          );
+        }
+        if (adjustment.action === 'ADD') {
+          const created = await transaction.mealReservation.create({
+            data: {
+              employeeId: employee.employeeCode,
+              mealId: newMeal.id,
+              mealDate,
+              mealType: MealType.LUNCH,
+              quantity: 1,
+            },
+          });
+          await transaction.auditLog.create({
+            data: {
+              entityName: 'meal_reservations',
+              entityId: created.id,
+              action: 'CREATE',
+              actorUserId: actor.id,
+              previousValues: JSON.stringify(previousValues),
+              newValues: JSON.stringify({
+                employeeCode: employee.employeeCode,
+                date: adjustment.date,
+                mealId: newMeal.id,
+                mealName: newMeal.name,
+                source: 'RH_ADJUSTMENT',
+                adjustmentType: 'ADD',
+                reason,
+                modifiedBy: actor.username,
+              }),
+            },
+          });
+
+          return {
+            status: 'ADDED' as const,
+            employee: previousValues,
+            previousMeal: null,
+            newMeal: newMeal.name,
+            reason,
+            modifiedBy: actor.username,
+          };
+        }
+        if (!reservation) {
+          throw new NotFoundException(
+            'El empleado no tiene una reservación para cambiar',
+          );
+        }
+        if (newMeal.id === reservation.mealId) {
+          throw new BadRequestException(
+            'La nueva comida debe ser diferente de la reservación actual',
+          );
+        }
+
+        await transaction.mealReservation.update({
+          where: { id: reservation.id },
+          data: { mealId: newMeal.id, quantity: 1 },
+        });
+        await transaction.auditLog.create({
+          data: {
+            entityName: 'meal_reservations',
+            entityId: reservation.id,
+            action: 'UPDATE',
+            actorUserId: actor.id,
+            previousValues: JSON.stringify(previousValues),
+            newValues: JSON.stringify({
+              employeeCode: employee.employeeCode,
+              date: adjustment.date,
+              mealId: newMeal.id,
+              mealName: newMeal.name,
+              source: 'RH_ADJUSTMENT',
+              adjustmentType: 'CHANGE',
+              reason,
+              modifiedBy: actor.username,
+            }),
+          },
+        });
+
+        return {
+          status: 'CHANGED' as const,
+          employee: previousValues,
+          previousMeal: reservation.meal.name,
+          newMeal: newMeal.name,
+          reason,
+          modifiedBy: actor.username,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
+  }
+
+  async getRecentMealAdjustments() {
+    const logs = await this.prisma.auditLog.findMany({
+      where: {
+        entityName: 'meal_reservations',
+        action: { in: RH_ADJUSTMENT_ACTIONS },
+        actorUserId: { not: null },
+      },
+      include: {
+        actorUser: { select: { username: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+
+    return logs.flatMap((log) => {
+      const previous = this.parseAuditValues(log.previousValues);
+      const next = this.parseAuditValues(log.newValues);
+      const employeeCode = this.getAuditString(previous, 'employeeCode');
+      const employeeName = this.getAuditString(previous, 'employeeName');
+      const date = this.getAuditString(previous, 'date');
+      const previousMeal = this.getAuditString(previous, 'mealName');
+      const reason = this.getAuditString(next, 'reason');
+      const source = this.getAuditString(next, 'source');
+      const adjustmentType = this.getAuditString(next, 'adjustmentType');
+      const isAddition = adjustmentType === 'ADD';
+      if (
+        source !== 'RH_ADJUSTMENT' ||
+        !employeeCode ||
+        !employeeName ||
+        !date ||
+        (!isAddition && !previousMeal) ||
+        !reason
+      ) {
+        return [];
+      }
+
+      return [{
+        id: log.id,
+        reservationId: log.entityId,
+        employee: {
+          code: employeeCode,
+          name: employeeName,
+          department: this.getAuditString(previous, 'department'),
+        },
+        date,
+        action: isAddition
+          ? ('ADD' as const)
+          : adjustmentType === 'CHANGE'
+            ? ('CHANGE' as const)
+            : ('CANCEL' as const),
+        previousMeal: isAddition ? null : previousMeal,
+        newMeal: this.getAuditString(next, 'mealName') || null,
+        reason,
+        modifiedBy: log.actorUser?.username ?? 'Usuario no disponible',
+        modifiedAt: log.createdAt.toISOString(),
+      }];
+    });
   }
 
   async saveCurrentWeeklyMenu(
@@ -748,58 +1140,41 @@ export class MealsService {
 
   async saveWeeklyCutoffs(
     weekStart: string,
-    configuration: {
-      mode: 'GENERAL' | 'DAILY';
-      generalTime?: string;
-      days?: Array<{ date: string; cutoffTime: string }>;
-    },
+    configuration: { cutoffTime: string },
     actorUserId: string,
   ) {
     const week = this.getWorkWeekFromStart(weekStart);
     this.assertCurrentOrFutureWeek(week.start);
-    let cutoffs: Array<{ date: string; cutoffTime: string }>;
-
-    if (configuration.mode === 'GENERAL') {
-      if (!configuration.generalTime || !this.isValidTime(configuration.generalTime)) {
-        throw new BadRequestException('Debes indicar un horario general válido');
-      }
-      cutoffs = week.dates.map((date) => ({
-        date,
-        cutoffTime: configuration.generalTime!,
-      }));
-    } else {
-      const receivedDays = configuration.days ?? [];
-      const receivedDates = new Set(receivedDays.map((day) => day.date));
-      if (
-        receivedDates.size !== 5 ||
-        receivedDays.some(
-          (day) => !week.dates.includes(day.date) || !this.isValidTime(day.cutoffTime),
-        ) ||
-        week.dates.some((date) => !receivedDates.has(date))
-      ) {
-        throw new BadRequestException(
-          'Debes indicar un horario válido para cada día de la semana',
-        );
-      }
-      cutoffs = week.dates.map((date) => receivedDays.find((day) => day.date === date)!);
+    if (!this.isValidTime(configuration.cutoffTime)) {
+      throw new BadRequestException(
+        'Debes indicar una hora válida para el cierre del lunes',
+      );
     }
 
     await this.prisma.$transaction(async (transaction) => {
-      for (const cutoff of cutoffs) {
-        const mealDate = new Date(`${cutoff.date}T00:00:00.000Z`);
-        await transaction.mealOrderCutoff.upsert({
-          where: { mealDate },
-          update: { cutoffTime: cutoff.cutoffTime },
-          create: { mealDate, cutoffTime: cutoff.cutoffTime },
-        });
-      }
+      await transaction.mealOrderCutoff.deleteMany({
+        where: {
+          mealDate: { gt: week.start, lte: week.end },
+        },
+      });
+      await transaction.mealOrderCutoff.upsert({
+        where: { mealDate: week.start },
+        update: { cutoffTime: configuration.cutoffTime },
+        create: {
+          mealDate: week.start,
+          cutoffTime: configuration.cutoffTime,
+        },
+      });
       await transaction.auditLog.create({
         data: {
           entityName: 'weekly_cutoffs',
           entityId: weekStart,
           action: 'UPDATE',
           actorUserId,
-          newValues: JSON.stringify({ mode: configuration.mode, cutoffs }),
+          newValues: JSON.stringify({
+            day: 'MONDAY',
+            cutoffTime: configuration.cutoffTime,
+          }),
         },
       });
     });
@@ -836,10 +1211,13 @@ export class MealsService {
     const totalsByMeal = new Map(
       totals.map((total) => [total.mealId, total._sum.quantity ?? 0]),
     );
-    const cutoffByDate = new Map(
-      storedCutoffs.map((cutoff) => [this.getDateOnly(cutoff.mealDate), cutoff.cutoffTime]),
+    const weeklyCutoff = storedCutoffs.find(
+      (cutoff) => this.getDateOnly(cutoff.mealDate) === weekStart,
+    )?.cutoffTime ?? PUBLIC_WEEKLY_ORDER_CUTOFF;
+    const weeklyLockReason = this.getWeeklyOrderingLockReason(
+      new Date(),
+      weeklyCutoff,
     );
-    const fallbackCutoff = this.getDefaultOrderCutoffTime();
     const days = week.dates.map((date, index) => {
       const dayMeals = meals
         .filter((meal) => this.getDateOnly(meal.availableDate) === date)
@@ -848,16 +1226,14 @@ export class MealsService {
           name: meal.name,
           total: totalsByMeal.get(meal.id) ?? 0,
         }));
-      const cutoffTime = cutoffByDate.get(date) ?? fallbackCutoff;
       const total = dayMeals.reduce((sum, meal) => sum + meal.total, 0);
-      const lockReason = this.getReservationLockReason(date, new Date(), cutoffTime);
 
       return {
         date,
         dayName: ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'][index],
-        cutoffTime,
-        isClosed: lockReason !== null,
-        lockReason,
+        cutoffTime: weeklyCutoff,
+        isClosed: weeklyLockReason !== null,
+        lockReason: weeklyLockReason,
         total,
         meals: dayMeals,
       };
@@ -1205,7 +1581,7 @@ export class MealsService {
 
     const content = await workbook.xlsx.writeBuffer();
     return {
-      fileName: `pendientes-comida-${date}.xlsx`,
+      fileName: `pedidos-pendientes-${date}.xlsx`,
       buffer: Buffer.from(content),
     };
   }
@@ -1308,54 +1684,61 @@ export class MealsService {
   private async getTodayCutoffState(now: Date) {
     const mealDate = this.getLocalDate(now);
     const date = this.getDateOnly(mealDate);
+    const week = this.getCurrentWorkWeek(now);
     const storedCutoff = await this.prisma.mealOrderCutoff.findUnique({
-      where: { mealDate },
+      where: { mealDate: week.start },
       select: { cutoffTime: true },
     });
-    const cutoffTime = storedCutoff?.cutoffTime ?? this.getDefaultOrderCutoffTime();
+    const cutoffTime = storedCutoff?.cutoffTime ?? PUBLIC_WEEKLY_ORDER_CUTOFF;
 
     return {
       mealDate,
       date,
       cutoffTime,
-      isClosed: this.getReservationLockReason(date, now, cutoffTime) !== null,
+      isClosed: this.getWeeklyOrderingLockReason(now, cutoffTime) !== null,
     };
   }
 
-  private getDefaultOrderCutoffTime() {
-    const configured = process.env.MEAL_ORDER_CUTOFF_TIME?.trim() ?? '';
-    return this.isValidTime(configured) ? configured : '08:00';
+  private async getPublicWeeklyOrderingCutoff(now = new Date()) {
+    const week = this.getCurrentWorkWeek(now);
+    const storedCutoff = await this.prisma.mealOrderCutoff.findUnique({
+      where: { mealDate: week.start },
+      select: { cutoffTime: true },
+    });
+    return storedCutoff?.cutoffTime ?? PUBLIC_WEEKLY_ORDER_CUTOFF;
   }
 
   private isValidTime(value: string) {
     return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
   }
 
-  private getReservationLockReason(
-    date: string,
+  private getWeeklyOrderingLockReason(
     now = new Date(),
-    cutoffTime = this.getDefaultOrderCutoffTime(),
+    cutoffTime = PUBLIC_WEEKLY_ORDER_CUTOFF,
   ) {
-    const today = this.getDateOnly(this.getLocalDate(now));
-    if (date < today) {
-      return `La reservación del ${date} pertenece a un día anterior y ya no puede modificarse`;
+    const localDate = this.getLocalDate(now);
+    if (localDate.getUTCDay() !== 1) {
+      return `Las reservaciones públicas solo están disponibles los lunes hasta las ${cutoffTime}. Para solicitar un cambio, comunícate con Recursos Humanos`;
     }
-    if (date > today) return null;
+    const currentMinutes = this.getLocalMinutes(now);
+    const [cutoffHour, cutoffMinute] = cutoffTime
+      .split(':')
+      .map(Number);
 
-    const [cutoffHour, cutoffMinute] = cutoffTime.split(':').map(Number);
+    return currentMinutes >= cutoffHour * 60 + cutoffMinute
+      ? `Las reservaciones públicas cerraron el lunes a las ${cutoffTime}. Para solicitar un cambio, comunícate con Recursos Humanos`
+      : null;
+  }
+
+  private getLocalMinutes(date: Date) {
     const parts = new Intl.DateTimeFormat('en-US', {
       timeZone: MEAL_TIME_ZONE,
       hour: '2-digit',
       minute: '2-digit',
       hourCycle: 'h23',
-    }).formatToParts(now);
+    }).formatToParts(date);
     const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-    const currentMinutes = Number(values.hour) * 60 + Number(values.minute);
-    const cutoffMinutes = cutoffHour * 60 + cutoffMinute;
-
-    return currentMinutes >= cutoffMinutes
-      ? `El horario para cambiar la comida de hoy cerró a las ${cutoffTime}`
-      : null;
+    return Number(values.hour) * 60 + Number(values.minute);
   }
 
   private getLocalDate(date: Date) {
@@ -1400,6 +1783,22 @@ export class MealsService {
     const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
 
     return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
+  }
+
+  private parseAuditValues(value: string | null) {
+    if (!value) return {} as Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(value);
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {} as Record<string, unknown>;
+    }
+  }
+
+  private getAuditString(values: Record<string, unknown>, key: string) {
+    return typeof values[key] === 'string' ? values[key] : '';
   }
 
   private isApprovedMealConflict(error: unknown) {

@@ -9,6 +9,9 @@ import type {
 import { apiDownload, apiRequest } from './api';
 import type {
   EmployeeWeeklySelections,
+  MealAdjustmentContext,
+  MealAdjustmentHistoryItem,
+  MealAdjustmentResult,
   SavedWeeklySelections,
   WeeklyMenu,
   WeeklyOrderSummary,
@@ -42,7 +45,21 @@ export function getTodayMealSummary(signal?: AbortSignal) {
 }
 
 export function downloadPendingTodayExport() {
-  return apiDownload('/meals/pending-today/export');
+  return apiDownload(
+    '/meals/pending-today/export',
+    `pedidos-pendientes-${getGuatemalaDate()}.xlsx`,
+  );
+}
+
+function getGuatemalaDate() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Guatemala',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
 }
 
 export function getAvailableMealsToday(signal?: AbortSignal) {
@@ -102,11 +119,7 @@ export function saveCurrentWeeklyMenu(
 
 export function saveWeeklyCutoffs(
   weekStart: string,
-  configuration: {
-    mode: 'GENERAL' | 'DAILY';
-    generalTime?: string;
-    days?: Array<{ date: string; cutoffTime: string }>;
-  },
+  configuration: { cutoffTime: string },
 ) {
   return apiRequest<WeeklyMenu>(`/meal-planning/weeks/${encodeURIComponent(weekStart)}/cutoffs`, {
     method: 'PUT',
@@ -119,4 +132,38 @@ export function getWeeklyOrderSummary(weekStart: string, signal?: AbortSignal) {
     `/meal-planning/weeks/${encodeURIComponent(weekStart)}/summary`,
     { signal },
   );
+}
+
+export function getMealAdjustmentContext(
+  employeeCode: string,
+  signal?: AbortSignal,
+) {
+  return apiRequest<MealAdjustmentContext>(
+    `/meal-planning/adjustments/employees/${encodeURIComponent(employeeCode.trim())}`,
+    { signal },
+  );
+}
+
+export function adjustEmployeeMeal(
+  employeeCode: string,
+  adjustment: {
+    date: string;
+    action: 'ADD' | 'CHANGE' | 'CANCEL';
+    mealId?: string;
+    reason: string;
+  },
+) {
+  return apiRequest<MealAdjustmentResult>(
+    `/meal-planning/adjustments/employees/${encodeURIComponent(employeeCode.trim())}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(adjustment),
+    },
+  );
+}
+
+export function getRecentMealAdjustments(signal?: AbortSignal) {
+  return apiRequest<MealAdjustmentHistoryItem[]>('/meal-planning/adjustments', {
+    signal,
+  });
 }

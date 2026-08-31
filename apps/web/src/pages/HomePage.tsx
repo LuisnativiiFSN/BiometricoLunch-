@@ -64,7 +64,7 @@ export function HomePage() {
   return (
     <div className="page home-dashboard weekly-results-dashboard">
       <header className="page-header dashboard-header">
-        <div><span className="section-kicker">Resultados semanales</span><h1>Pedidos por comida</h1><p>Totales y desglose por cada día de la semana para preparar el reporte del Chef.</p></div>
+        <div><span className="section-kicker">Resultados semanales</span><h1>Pedidos por comida</h1><p>Totales y desglose por cada día de la semana para preparar el reporte del proveedor.</p></div>
         <button className="button button-secondary" type="button" onClick={() => setRefreshKey((current) => current + 1)}>Actualizar datos</button>
       </header>
 
@@ -92,14 +92,14 @@ export function HomePage() {
       </div>
 
       <section className="weekly-results-card" aria-labelledby="weekly-results-title">
-        <div className="weekly-results-heading"><div><span className="card-eyebrow">Desglose para el Chef</span><h2 id="weekly-results-title">Cantidad solicitada por comida</h2></div><span className="live-indicator"><i /> Datos actuales</span></div>
+        <div className="weekly-results-heading"><div><span className="card-eyebrow">Desglose para el proveedor</span><h2 id="weekly-results-title">Cantidad solicitada por comida</h2></div><span className="live-indicator"><i /> Datos actuales</span></div>
         {isLoadingWeek ? <div className="weekly-loading"><span className="button-spinner" /> Calculando totales…</div> : (
           <div className="chef-results-grid">
             {weeklySummary?.days.map((day) => {
               const maxTotal = Math.max(1, ...day.meals.map((meal) => meal.total));
               return (
                 <article className="chef-day-result" key={day.date}>
-                  <header><div><span>{day.dayName}</span><small>{formatDate(day.date)} · Cierre {day.cutoffTime}</small></div><strong>{day.total}<small> pedidos</small></strong></header>
+                  <header><div><span>{day.dayName}</span><small>{formatDate(day.date)}</small></div><strong>{day.total}<small> pedidos</small></strong></header>
                   <div className="chef-meal-bars">
                     {day.meals.length === 0 ? <p className="chef-empty-day">No hay menú configurado.</p> : day.meals.map((meal) => (
                       <div className="chef-meal-bar" key={meal.mealId}>
@@ -108,7 +108,6 @@ export function HomePage() {
                       </div>
                     ))}
                   </div>
-                  <footer className={day.isClosed ? 'is-closed' : ''}><i />{day.isClosed ? 'Conteo cerrado' : 'Recibiendo solicitudes'}</footer>
                 </article>
               );
             })}

@@ -38,6 +38,7 @@ export class MealsHistoryController {
   }
 
   @Get('pending-today/export')
+  @Roles(UserRole.ADMIN, UserRole.RH)
   async exportPendingToday() {
     const exported = await this.mealsService.exportPendingToday();
     return new StreamableFile(exported.buffer, {

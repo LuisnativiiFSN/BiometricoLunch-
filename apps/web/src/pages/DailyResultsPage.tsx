@@ -1,17 +1,18 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { downloadPendingTodayExport, getPendingToday, getTodayMealSummary } from '../services/meals.service';
 import type { PendingMealItem, TodayMealSummary } from '../types/meal-history';
+import type { UserRole } from '../types/auth';
 
 const emptySummary: TodayMealSummary = {
   reserved: 0,
   collected: 0,
   pending: 0,
   duplicateAttempts: 0,
-  cutoffTime: '08:00',
+  cutoffTime: '09:30',
   exportAvailable: false,
 };
 
-export function DailyResultsPage() {
+export function DailyResultsPage({ role }: { role?: UserRole }) {
   const [pendingMeals, setPendingMeals] = useState<PendingMealItem[]>([]);
   const [summary, setSummary] = useState<TodayMealSummary>(emptySummary);
   const [isLoading, setIsLoading] = useState(true);
@@ -43,6 +44,7 @@ export function DailyResultsPage() {
 
   const collectedPercentage = summary.reserved > 0 ? Math.round((summary.collected / summary.reserved) * 100) : 0;
   const todayLabel = new Intl.DateTimeFormat('es-GT', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
+  const canExportPending = role === 'ADMIN' || role === 'RH';
 
   const handleExport = async () => {
     setIsExporting(true);
@@ -69,18 +71,22 @@ export function DailyResultsPage() {
       <header className="page-header dashboard-header">
         <div><span className="section-kicker">Operación diaria</span><h1>Entregas y pendientes de hoy</h1><p>Seguimiento de las comidas reclamadas y de las personas que todavía tienen una entrega pendiente.</p></div>
         <div className="dashboard-header-actions">
-          <button className="button button-primary" type="button" disabled={isLoading || isExporting || !summary.exportAvailable} title={summary.exportAvailable ? 'Descargar archivo Excel' : `Disponible después del cierre de las ${summary.cutoffTime}`} onClick={() => void handleExport()}>
-            {isExporting ? <><span className="button-spinner" /> Generando…</> : 'Exportar pendientes a Excel'}
-          </button>
+          {canExportPending && (
+            <button className="button button-primary" type="button" disabled={isLoading || isExporting || !summary.exportAvailable} title={summary.exportAvailable ? 'Descargar archivo Excel' : `Disponible después del cierre de las ${summary.cutoffTime}`} onClick={() => void handleExport()}>
+              {isExporting ? <><span className="button-spinner" /> Generando…</> : 'Exportar pendientes a Excel'}
+            </button>
+          )}
           <button className="button button-secondary" type="button" disabled={isLoading || isExporting} onClick={() => setRefreshKey((current) => current + 1)}>Actualizar datos</button>
         </div>
       </header>
 
       <div className="daily-results-date"><span>Fecha consultada</span><strong>{todayLabel}</strong></div>
-      <div className={`pending-export-status ${summary.exportAvailable ? 'is-available' : ''}`} role="status">
-        <span aria-hidden="true">{summary.exportAvailable ? '✓' : '◷'}</span>
-        <div><strong>{summary.exportAvailable ? 'Exportación disponible' : `Disponible después de las ${summary.cutoffTime}`}</strong><p>El Excel incluye código, nombre, departamento y comida, ordenados por departamento.</p></div>
-      </div>
+      {canExportPending && (
+        <div className={`pending-export-status ${summary.exportAvailable ? 'is-available' : ''}`} role="status">
+          <span aria-hidden="true">{summary.exportAvailable ? '✓' : '◷'}</span>
+          <div><strong>{summary.exportAvailable ? 'Exportación disponible' : `Disponible después de las ${summary.cutoffTime}`}</strong><p>El Excel incluye código, nombre, departamento y comida, ordenados por departamento.</p></div>
+        </div>
+      )}
       {error && <div className="history-error dashboard-error" role="alert">{error}</div>}
 
       <div className="dashboard-grid">

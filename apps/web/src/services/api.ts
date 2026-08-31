@@ -73,7 +73,10 @@ export async function apiRequest<T>(
   return (await response.json()) as T;
 }
 
-export async function apiDownload(path: string): Promise<{ blob: Blob; fileName: string }> {
+export async function apiDownload(
+  path: string,
+  fallbackFileName = 'reporte.xlsx',
+): Promise<{ blob: Blob; fileName: string }> {
   let response: Response;
 
   try {
@@ -106,6 +109,6 @@ export async function apiDownload(path: string): Promise<{ blob: Blob; fileName:
 
   const disposition = response.headers.get('Content-Disposition') ?? '';
   const fileName = disposition.match(/filename="?([^";]+)"?/i)?.[1]
-    ?? 'pendientes-comida.xlsx';
+    ?? fallbackFileName;
   return { blob: await response.blob(), fileName };
 }

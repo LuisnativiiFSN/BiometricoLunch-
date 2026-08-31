@@ -76,6 +76,19 @@ function getToday() {
   return `${values.year}-${values.month}-${values.day}`;
 }
 
+function getCurrentMonday() {
+  const date = new Date(`${getToday()}T00:00:00.000Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
 before(async () => {
   await prisma.onModuleInit();
   await cleanup();
@@ -113,6 +126,7 @@ describe('autenticación y permisos por rol', () => {
   test('bloquea las rutas internas sin sesión y mantiene salud/kiosco públicos', async () => {
     assert.equal((await api('/meals/pending-today')).status, 401);
     assert.equal((await api('/meals/pending-today/export')).status, 401);
+    assert.equal((await api('/meal-planning/adjustments')).status, 401);
     assert.equal((await api('/employees')).status, 401);
     assert.equal((await api('/health')).status, 200);
     assert.equal(
@@ -136,6 +150,8 @@ describe('autenticación y permisos por rol', () => {
     assert.equal((await api('/users', adminCookie)).status, 200);
     assert.equal((await api('/employees', adminCookie)).status, 200);
     assert.equal((await api('/employees', rhCookie)).status, 200);
+    assert.equal((await api('/employees/departments', adminCookie)).status, 200);
+    assert.equal((await api('/employees/departments', rhCookie)).status, 200);
     assert.equal(
       (
         await api('/meals/reservations/manual', rhCookie, {
@@ -149,6 +165,7 @@ describe('autenticación y permisos por rol', () => {
       403,
     );
     assert.equal((await api('/employees', chefCookie)).status, 403);
+    assert.equal((await api('/employees/departments', chefCookie)).status, 403);
     assert.equal((await api('/employees/CUALQUIERA', chefCookie)).status, 403);
     assert.equal(
       (
@@ -168,7 +185,23 @@ describe('autenticación y permisos por rol', () => {
       ).status,
       200,
     );
+    assert.equal(
+      (await api('/meals/pending-today/export', chefCookie)).status,
+      403,
+    );
     assert.equal((await api('/users', chefCookie)).status, 403);
+    assert.equal((await api('/meal-planning/adjustments', rhCookie)).status, 200);
+    assert.equal((await api('/meal-planning/adjustments', adminCookie)).status, 403);
+    assert.equal((await api('/meal-planning/adjustments', chefCookie)).status, 403);
+    assert.equal(
+      (
+        await api(
+          '/meal-planning/adjustments/employees/NO-EXISTE',
+          rhCookie,
+        )
+      ).status,
+      404,
+    );
   });
 
   test('impide modificar la contraseña de la cuenta administradora protegida', async () => {
@@ -289,6 +322,53 @@ describe('autenticación y permisos por rol', () => {
       (await api('/transfers/pending/D1-NO-EXISTE', chefCookie)).status,
       403,
     );
+  });
+
+  test('la exportación individual es privada para Administrador y Recursos Humanos', async () => {
+    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+      login(TEST_USERS[0]),
+      login(TEST_USERS[1]),
+      login(TEST_USERS[2]),
+    ]);
+    const path =
+      '/meal-audits/employees/NO-EXISTE/export?startDate=2026-02-10&endDate=2026-08-28';
+
+    assert.equal((await api(path)).status, 401);
+    assert.equal((await api(path, chefCookie)).status, 403);
+    assert.equal((await api(path, adminCookie)).status, 404);
+    assert.equal((await api(path, rhCookie)).status, 404);
+  });
+
+  test('el reporte de nómina es privado para Administrador y Recursos Humanos', async () => {
+    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+      login(TEST_USERS[0]),
+      login(TEST_USERS[1]),
+      login(TEST_USERS[2]),
+    ]);
+    const path =
+      '/meal-audits/payroll/export?startDate=2099-02-01&endDate=2099-02-05';
+
+    assert.equal((await api(path)).status, 401);
+    assert.equal((await api(path, chefCookie)).status, 403);
+    assert.equal((await api(path, adminCookie)).status, 200);
+    assert.equal((await api(path, rhCookie)).status, 200);
+  });
+
+  test('los pedidos diarios y semanales solo se exportan por Administrador y RH', async () => {
+    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+      login(TEST_USERS[0]),
+      login(TEST_USERS[1]),
+      login(TEST_USERS[2]),
+    ]);
+    const currentMonday = getCurrentMonday();
+    const weeklyPath = `/meal-audits/orders/weeks/${currentMonday}/export`;
+    const dailyPath = `/meal-audits/orders/days/${addDays(currentMonday, 1)}/export`;
+
+    assert.equal((await api(weeklyPath)).status, 401);
+    assert.equal((await api(weeklyPath, chefCookie)).status, 403);
+    assert.equal((await api(dailyPath, chefCookie)).status, 403);
+    assert.equal((await api(weeklyPath, adminCookie)).status, 200);
+    assert.equal((await api(dailyPath, rhCookie)).status, 200);
   });
 
   test('el administrador crea cuentas RH y restablece su contraseña de forma segura', async () => {
