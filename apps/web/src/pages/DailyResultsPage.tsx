@@ -1,13 +1,22 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { getPendingToday, getTodayMealSummary } from '../services/meals.service';
+import { downloadPendingTodayExport, getPendingToday, getTodayMealSummary } from '../services/meals.service';
 import type { PendingMealItem, TodayMealSummary } from '../types/meal-history';
+import type { UserRole } from '../types/auth';
 
-const emptySummary: TodayMealSummary = { reserved: 0, collected: 0, pending: 0, duplicateAttempts: 0 };
+const emptySummary: TodayMealSummary = {
+  reserved: 0,
+  collected: 0,
+  pending: 0,
+  duplicateAttempts: 0,
+  cutoffTime: '09:30',
+  exportAvailable: false,
+};
 
-export function DailyResultsPage() {
+export function DailyResultsPage({ role }: { role?: UserRole }) {
   const [pendingMeals, setPendingMeals] = useState<PendingMealItem[]>([]);
   const [summary, setSummary] = useState<TodayMealSummary>(emptySummary);
   const [isLoading, setIsLoading] = useState(true);
+  const [isExporting, setIsExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
@@ -35,23 +44,57 @@ export function DailyResultsPage() {
 
   const collectedPercentage = summary.reserved > 0 ? Math.round((summary.collected / summary.reserved) * 100) : 0;
   const todayLabel = new Intl.DateTimeFormat('es-GT', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date());
+  const canExportPending = role === 'ADMIN' || role === 'RH';
+
+  const handleExport = async () => {
+    setIsExporting(true);
+    setError(null);
+    try {
+      const exported = await downloadPendingTodayExport();
+      const url = URL.createObjectURL(exported.blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = exported.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (exportError) {
+      setError(exportError instanceof Error ? exportError.message : 'No fue posible exportar los pendientes');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   return (
     <div className="page home-dashboard daily-results-dashboard">
       <header className="page-header dashboard-header">
         <div><span className="section-kicker">Operación diaria</span><h1>Entregas y pendientes de hoy</h1><p>Seguimiento de las comidas reclamadas y de las personas que todavía tienen una entrega pendiente.</p></div>
-        <button className="button button-secondary" type="button" onClick={() => setRefreshKey((current) => current + 1)}>Actualizar datos</button>
+        <div className="dashboard-header-actions">
+          {canExportPending && (
+            <button className="button button-primary" type="button" disabled={isLoading || isExporting || !summary.exportAvailable} title={summary.exportAvailable ? 'Descargar archivo Excel' : `Disponible después del cierre de las ${summary.cutoffTime}`} onClick={() => void handleExport()}>
+              {isExporting ? <><span className="button-spinner" /> Generando…</> : 'Exportar pendientes a Excel'}
+            </button>
+          )}
+          <button className="button button-secondary" type="button" disabled={isLoading || isExporting} onClick={() => setRefreshKey((current) => current + 1)}>Actualizar datos</button>
+        </div>
       </header>
 
       <div className="daily-results-date"><span>Fecha consultada</span><strong>{todayLabel}</strong></div>
+      {canExportPending && (
+        <div className={`pending-export-status ${summary.exportAvailable ? 'is-available' : ''}`} role="status">
+          <span aria-hidden="true">{summary.exportAvailable ? '✓' : '◷'}</span>
+          <div><strong>{summary.exportAvailable ? 'Exportación disponible' : `Disponible después de las ${summary.cutoffTime}`}</strong><p>El Excel incluye código, nombre, departamento y comida, ordenados por departamento.</p></div>
+        </div>
+      )}
       {error && <div className="history-error dashboard-error" role="alert">{error}</div>}
 
       <div className="dashboard-grid">
         <section className="dashboard-card pending-preview" aria-labelledby="pending-title">
           <div className="card-heading"><div><span className="card-eyebrow">Pendientes de entrega</span><h2 id="pending-title">Aún no han reclamado</h2></div><span className="count-pill">{isLoading ? '—' : summary.pending}</span></div>
-          <div className="table-scroll dashboard-table-scroll"><table className="meals-table dashboard-table"><thead><tr><th>Código</th><th>Empleado</th><th>Comida solicitada</th></tr></thead><tbody>
-            {isLoading ? <tr><td colSpan={3} className="history-empty">Consultando pendientes…</td></tr> : pendingMeals.length === 0 ? <tr><td colSpan={3} className="history-empty success-empty">Todas las comidas solicitadas ya fueron entregadas.</td></tr> : pendingMeals.map((item) => (
-              <tr key={item.employeeCode}><td data-label="Código" className="history-code">{item.employeeCode}</td><td data-label="Empleado"><span className="person-cell"><span className="mini-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><strong>{item.name}</strong></span></td><td data-label="Comida">{item.meal}</td></tr>
+          <div className="table-scroll dashboard-table-scroll"><table className="meals-table dashboard-table"><thead><tr><th>Departamento</th><th>Código</th><th>Empleado</th><th>Comida solicitada</th></tr></thead><tbody>
+            {isLoading ? <tr><td colSpan={4} className="history-empty">Consultando pendientes…</td></tr> : pendingMeals.length === 0 ? <tr><td colSpan={4} className="history-empty success-empty">Todas las comidas solicitadas ya fueron entregadas.</td></tr> : pendingMeals.map((item) => (
+              <tr key={item.employeeCode}><td data-label="Departamento">{item.department}</td><td data-label="Código" className="history-code">{item.employeeCode}</td><td data-label="Empleado"><span className="person-cell"><span className="mini-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><strong>{item.name}</strong></span></td><td data-label="Comida">{item.meal}</td></tr>
             ))}
           </tbody></table></div>
         </section>

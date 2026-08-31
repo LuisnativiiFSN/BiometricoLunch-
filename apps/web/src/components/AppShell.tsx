@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { fasaniLogo } from '../assets/fasani-logo';
 import type { AuthUser, UserRole } from '../types/auth';
 
-export type AppPage = 'login' | 'consultation' | 'weekly-order' | 'weekly-menu' | 'home' | 'daily-results' | 'employees' | 'deliveries' | 'pending' | 'transfers' | 'users';
+export type AppPage = 'login' | 'consultation' | 'weekly-order' | 'weekly-menu' | 'meal-adjustments' | 'meal-audit' | 'home' | 'daily-results' | 'employees' | 'deliveries' | 'pending' | 'transfers' | 'users';
 
 interface AppShellProps {
   activePage: AppPage;
@@ -14,21 +14,45 @@ interface AppShellProps {
 
 const navigation: Array<{ id: AppPage; label: string; public?: boolean; roles?: UserRole[] }> = [
   { id: 'login', label: 'Iniciar sesión', public: true },
-  { id: 'weekly-order', label: 'Encargar comida', public: true, roles: ['ADMIN', 'RH'] },
-  { id: 'home', label: 'Resultados semanales' },
-  { id: 'daily-results', label: 'Resultados de hoy' },
-  { id: 'weekly-menu', label: 'Menú semanal', roles: ['ADMIN', 'RH'] },
   { id: 'consultation', label: 'Consulta', public: true, roles: ['ADMIN', 'RH'] },
-  { id: 'employees', label: 'Empleados', roles: ['ADMIN', 'RH'] },
+  { id: 'weekly-order', label: 'Encargar comida', public: true, roles: ['ADMIN', 'RH'] },
   { id: 'deliveries', label: 'Entregas' },
   { id: 'pending', label: 'Pendientes' },
+  { id: 'daily-results', label: 'Resultados de hoy' },
+  { id: 'home', label: 'Resultados semanales' },
+  { id: 'weekly-menu', label: 'Menú de la semana', roles: ['ADMIN', 'RH'] },
+  { id: 'meal-adjustments', label: 'Modificar almuerzo', roles: ['RH'] },
   { id: 'transfers', label: 'Transferencias', roles: ['ADMIN', 'RH'] },
+  { id: 'meal-audit', label: 'Reportes', roles: ['ADMIN', 'RH'] },
+  { id: 'employees', label: 'Empleados', roles: ['ADMIN', 'RH'] },
   { id: 'users', label: 'Usuarios', roles: ['ADMIN'] },
 ];
 
+const navigationSections: Array<{ label: string; pages: AppPage[] }> = [
+  {
+    label: 'Acceso público',
+    pages: ['consultation', 'weekly-order'],
+  },
+  {
+    label: 'Operación diaria',
+    pages: ['deliveries', 'pending', 'daily-results', 'home'],
+  },
+  {
+    label: 'Configuración',
+    pages: [
+      'weekly-menu',
+      'meal-adjustments',
+      'transfers',
+      'meal-audit',
+      'employees',
+      'users',
+    ],
+  },
+];
+
 function NavigationIcon({ page }: { page: AppPage }) {
-  if (page === 'login' || page === 'consultation' || page === 'users' || page === 'transfers') {
-    const glyph = page === 'login' ? '↗' : page === 'consultation' ? '?' : page === 'transfers' ? '⇄' : 'U';
+  if (page === 'login' || page === 'consultation' || page === 'users' || page === 'transfers' || page === 'meal-adjustments' || page === 'meal-audit') {
+    const glyph = page === 'login' ? '↗' : page === 'consultation' ? '?' : page === 'transfers' ? '⇄' : page === 'meal-adjustments' ? '✎' : page === 'meal-audit' ? '⇩' : 'U';
     return <span className="nav-glyph" aria-hidden="true">{glyph}</span>;
   }
 
@@ -89,6 +113,19 @@ export function AppShell({ activePage, children, user, onNavigate, onLogout }: A
     if (item.id === 'login') return false;
     return !item.roles || item.roles.includes(user.role);
   });
+  const groupedNavigation = user?.role === 'ADMIN' || user?.role === 'RH';
+  const renderNavigationItem = (item: (typeof navigation)[number]) => (
+    <button
+      className={`nav-item ${activePage === item.id ? 'is-active' : ''}`}
+      type="button"
+      key={item.id}
+      aria-current={activePage === item.id ? 'page' : undefined}
+      onClick={() => onNavigate(item.id)}
+    >
+      <NavigationIcon page={item.id} />
+      <span>{item.label}</span>
+    </button>
+  );
 
   return (
     <div className="app-shell">
@@ -104,19 +141,24 @@ export function AppShell({ activePage, children, user, onNavigate, onLogout }: A
         </div>
 
         <nav className="main-nav" aria-label="Navegación principal">
-          <span className="nav-label">Menú principal</span>
-          {visibleNavigation.map((item) => (
-            <button
-              className={`nav-item ${activePage === item.id ? 'is-active' : ''}`}
-              type="button"
-              key={item.id}
-              aria-current={activePage === item.id ? 'page' : undefined}
-              onClick={() => onNavigate(item.id)}
-            >
-              <NavigationIcon page={item.id} />
-              <span>{item.label}</span>
-            </button>
-          ))}
+          {groupedNavigation ? navigationSections.map((section) => {
+            const items = section.pages.flatMap((page) => {
+              const item = visibleNavigation.find((candidate) => candidate.id === page);
+              return item ? [item] : [];
+            });
+            if (items.length === 0) return null;
+            return (
+              <section className="nav-section" aria-label={section.label} key={section.label}>
+                <span className="nav-label">{section.label}</span>
+                {items.map(renderNavigationItem)}
+              </section>
+            );
+          }) : (
+            <>
+              <span className="nav-label">Menú principal</span>
+              {visibleNavigation.map(renderNavigationItem)}
+            </>
+          )}
         </nav>
 
         {user ? (

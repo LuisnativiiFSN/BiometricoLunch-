@@ -8,6 +8,7 @@ import {
 import { SaveWeeklyMenuDto } from './dto/save-weekly-menu.dto.js';
 import { SaveWeeklyReservationsDto } from './dto/save-weekly-reservations.dto.js';
 import { SaveWeeklyCutoffsDto } from './dto/save-weekly-cutoffs.dto.js';
+import { AdjustMealReservationDto } from './dto/adjust-meal-reservation.dto.js';
 import { MealsService } from './meals.service.js';
 
 type AuthenticatedRequest = Request & { user: AuthenticatedUser };
@@ -46,6 +47,34 @@ export class WeeklyMealsController {
     return this.mealsService.saveCurrentWeekReservations(
       body.employeeCode,
       body.selections,
+    );
+  }
+
+  @Get('adjustments')
+  @Roles(UserRole.RH)
+  getRecentAdjustments() {
+    return this.mealsService.getRecentMealAdjustments();
+  }
+
+  @Get('adjustments/employees/:employeeCode')
+  @Roles(UserRole.RH)
+  getEmployeeAdjustment(
+    @Param('employeeCode') employeeCode: string,
+  ) {
+    return this.mealsService.getCurrentWeekMealAdjustment(employeeCode);
+  }
+
+  @Put('adjustments/employees/:employeeCode')
+  @Roles(UserRole.RH)
+  adjustEmployeeReservation(
+    @Param('employeeCode') employeeCode: string,
+    @Body() body: AdjustMealReservationDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.mealsService.adjustCurrentWeekReservation(
+      employeeCode,
+      body,
+      request.user,
     );
   }
 

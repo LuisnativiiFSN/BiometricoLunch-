@@ -3,6 +3,7 @@ import { EmployeeFormModal } from '../components/EmployeeFormModal';
 import { EmployeeTable } from '../components/EmployeeTable';
 import {
   createEmployee,
+  getEmployeeDepartments,
   getEmployees,
   updateEmployee,
 } from '../services/employees.service';
@@ -10,6 +11,7 @@ import type { Employee, EmployeeInput } from '../types/employee';
 
 export function EmployeesPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [departments, setDepartments] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -24,8 +26,14 @@ export function EmployeesPage() {
       setIsLoading(true);
       setError(null);
 
-      void getEmployees({ search, signal: controller.signal })
-        .then(setEmployees)
+      void Promise.all([
+        getEmployees({ search, signal: controller.signal }),
+        getEmployeeDepartments(controller.signal),
+      ])
+        .then(([employeeRecords, departmentRecords]) => {
+          setEmployees(employeeRecords);
+          setDepartments(departmentRecords);
+        })
         .catch((loadError: unknown) => {
           if (loadError instanceof DOMException && loadError.name === 'AbortError') {
             return;
@@ -169,6 +177,7 @@ export function EmployeesPage() {
       {isFormOpen && (
         <EmployeeFormModal
           employee={selectedEmployee}
+          departments={departments}
           onClose={() => {
             setIsFormOpen(false);
             setSelectedEmployee(null);

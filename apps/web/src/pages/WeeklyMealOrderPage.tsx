@@ -30,16 +30,23 @@ export function WeeklyMealOrderPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void getCurrentWeeklyMenu(controller.signal)
+    const refreshMenu = (signal?: AbortSignal) => getCurrentWeeklyMenu(signal)
       .then(setMenu)
       .catch((loadError: unknown) => {
         if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
         setError(loadError instanceof Error ? loadError.message : 'No fue posible consultar el menú');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setIsLoadingMenu(false);
+        if (!signal?.aborted) setIsLoadingMenu(false);
       });
-    return () => controller.abort();
+    void refreshMenu(controller.signal);
+    const refreshInterval = window.setInterval(() => {
+      void refreshMenu();
+    }, 60_000);
+    return () => {
+      controller.abort();
+      window.clearInterval(refreshInterval);
+    };
   }, []);
 
   const selectedCount = useMemo(
@@ -110,15 +117,15 @@ export function WeeklyMealOrderPage() {
         <div>
           <span className="section-kicker">Reservación de almuerzos</span>
           <h1>Encarga tu comida</h1>
-          <p>Identifícate con tu código y selecciona una opción para cada día que desees comer.</p>
+          <p>Los lunes, antes de la hora de cierre configurada, selecciona tus almuerzos para toda la semana.</p>
         </div>
         <span className="public-access-badge">Sin iniciar sesión</span>
       </header>
 
       {menu && (
         <div className="week-banner public-week-banner">
-          <div><span>{menu.isPublished ? 'Menú disponible' : 'Menú en preparación'}</span><strong>{formatWeek(menu.weekStart, menu.weekEnd)}</strong></div>
-          <p>{menu.isPublished ? (menu.cutoffMode === 'GENERAL' ? `Una comida por día · Cierre diario ${menu.orderingCutoffTime}` : 'Una comida por día · Consulta el cierre de cada fecha') : 'Se habilitará cuando estén completos los cinco días'}</p>
+          <div><span>{menu.isPublished ? (menu.publicOrderingOpen ? 'Reservaciones abiertas' : 'Reservaciones cerradas') : 'Menú en preparación'}</span><strong>{formatWeek(menu.weekStart, menu.weekEnd)}</strong></div>
+          <p>{menu.isPublished ? `Ventana pública: lunes hasta las ${menu.publicOrderingCutoffTime}` : 'Se habilitará cuando estén completos los cinco días'}</p>
         </div>
       )}
 
@@ -135,11 +142,11 @@ export function WeeklyMealOrderPage() {
                   inputMode="numeric"
                   autoComplete="off"
                   placeholder="Ej. 18908"
-                  disabled={isFinding || isLoadingMenu || !menu?.isPublished}
+                  disabled={isFinding || isLoadingMenu || !menu?.isPublished || !menu.publicOrderingOpen}
                   onChange={(event) => { setEmployeeCode(event.target.value); setError(null); }}
                 />
               </label>
-              <button className="button button-primary" type="submit" disabled={!employeeCode.trim() || isFinding || isLoadingMenu || !menu?.isPublished}>
+              <button className="button button-primary" type="submit" disabled={!employeeCode.trim() || isFinding || isLoadingMenu || !menu?.isPublished || !menu.publicOrderingOpen}>
                 {isFinding ? <><span className="button-spinner" /> Buscando…</> : 'Continuar'}
               </button>
             </form>
@@ -159,14 +166,17 @@ export function WeeklyMealOrderPage() {
         <div className="menu-not-ready" role="status"><span aria-hidden="true">!</span><div><strong>La semana todavía no está lista para publicarse</strong><p>Se habilitará cuando Recursos Humanos complete las comidas de lunes a viernes.</p></div></div>
       )}
 
+      {!isLoadingMenu && menu?.isPublished && !menu.publicOrderingOpen && (
+        <div className="menu-not-ready weekly-order-closed" role="status"><span aria-hidden="true">⌁</span><div><strong>Las reservaciones de esta semana están cerradas</strong><p>{menu.publicOrderingLockReason}</p></div></div>
+      )}
+
       {!isLoadingMenu && menu && (
-        <div className={`weekly-order-grid ${employee ? 'is-enabled' : ''}`} aria-label="Opciones del menú semanal">
+        <div className={`weekly-order-grid ${employee && menu.publicOrderingOpen ? 'is-enabled' : ''}`} aria-label="Opciones del menú semanal">
           {menu.days.map((day, index) => {
             const selectedMealId = selections[day.date] ?? '';
             return (
               <section className={`order-day-card ${selectedMealId ? 'has-selection' : ''}`} key={day.date}>
-                <header><span>{index + 1}</span><div><h2>{day.dayName}</h2><small>{formatDate(day.date)} · Cierre {day.cutoffTime}</small></div>{selectedMealId && <i aria-label="Comida seleccionada">✓</i>}</header>
-                {!day.canModify && <div className="day-lock-note"><span aria-hidden="true">⌁</span>{day.lockReason}</div>}
+                <header><span>{index + 1}</span><div><h2>{day.dayName}</h2><small>{formatDate(day.date)}</small></div>{selectedMealId && <i aria-label="Comida seleccionada">✓</i>}</header>
                 <div className="order-options">
                   {day.meals.length === 0 && <p className="day-without-menu">Menú pendiente</p>}
                   {day.meals.map((meal) => (
@@ -176,7 +186,7 @@ export function WeeklyMealOrderPage() {
                         name={`meal-${day.date}`}
                         value={meal.id}
                         checked={selectedMealId === meal.id}
-                        disabled={!employee || isSaving || !menu.isPublished || !day.canModify}
+                        disabled={!employee || isSaving || !menu.isPublished || !menu.publicOrderingOpen || !day.canModify}
                         onChange={() => { setSelections((current) => ({ ...current, [day.date]: meal.id })); setMessage(null); }}
                       />
                       <span aria-hidden="true" /><strong>{meal.name}</strong>
@@ -184,7 +194,7 @@ export function WeeklyMealOrderPage() {
                   ))}
                 </div>
                 {selectedMealId && (
-                  <button className="skip-day-button" type="button" disabled={!employee || isSaving || !menu.isPublished || !day.canModify} onClick={() => setSelections((current) => ({ ...current, [day.date]: '' }))}>
+                  <button className="skip-day-button" type="button" disabled={!employee || isSaving || !menu.isPublished || !menu.publicOrderingOpen || !day.canModify} onClick={() => setSelections((current) => ({ ...current, [day.date]: '' }))}>
                     No pedir comida este día
                   </button>
                 )}
@@ -197,7 +207,7 @@ export function WeeklyMealOrderPage() {
       {error && <div className="form-error weekly-feedback" role="alert">{error}</div>}
       {message && <div className="users-success weekly-feedback" role="status">{message}</div>}
 
-      {employee && menu?.isPublished && (
+      {employee && menu?.isPublished && menu.publicOrderingOpen && (
         <div className="weekly-order-save">
           <div><strong>{selectedCount} de 5 días seleccionados</strong><span>Puedes dejar días sin comida o cambiar una selección antes de guardar.</span></div>
           <button className="button button-primary" type="button" disabled={isSaving} onClick={() => setShowConfirmation(true)}>

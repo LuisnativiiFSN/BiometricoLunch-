@@ -30,9 +30,7 @@ export function WeeklyMenuAdminPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingCutoffs, setIsSavingCutoffs] = useState(false);
-  const [cutoffMode, setCutoffMode] = useState<'GENERAL' | 'DAILY'>('GENERAL');
-  const [generalTime, setGeneralTime] = useState('08:00');
-  const [dailyCutoffs, setDailyCutoffs] = useState<Record<string, string>>({});
+  const [mondayCutoffTime, setMondayCutoffTime] = useState('09:30');
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [cutoffError, setCutoffError] = useState<string | null>(null);
@@ -44,9 +42,7 @@ export function WeeklyMenuAdminPage() {
       .then((weeklyMenu) => {
         setMenu(weeklyMenu);
         setCurrentWeekStart(weeklyMenu.weekStart);
-        setCutoffMode(weeklyMenu.cutoffMode);
-        setGeneralTime(weeklyMenu.orderingCutoffTime ?? weeklyMenu.days[0]?.cutoffTime ?? '08:00');
-        setDailyCutoffs(Object.fromEntries(weeklyMenu.days.map((day) => [day.date, day.cutoffTime])));
+        setMondayCutoffTime(weeklyMenu.publicOrderingCutoffTime ?? '09:30');
         setMealsByDate(Object.fromEntries(
           weeklyMenu.days.map((day) => [
             day.date,
@@ -66,9 +62,7 @@ export function WeeklyMenuAdminPage() {
 
   const applyMenu = (weeklyMenu: WeeklyMenu) => {
     setMenu(weeklyMenu);
-    setCutoffMode(weeklyMenu.cutoffMode);
-    setGeneralTime(weeklyMenu.orderingCutoffTime ?? weeklyMenu.days[0]?.cutoffTime ?? '08:00');
-    setDailyCutoffs(Object.fromEntries(weeklyMenu.days.map((day) => [day.date, day.cutoffTime])));
+    setMondayCutoffTime(weeklyMenu.publicOrderingCutoffTime ?? '09:30');
     setMealsByDate(Object.fromEntries(
       weeklyMenu.days.map((day) => [
         day.date,
@@ -100,18 +94,10 @@ export function WeeklyMenuAdminPage() {
     try {
       const saved = await saveWeeklyCutoffs(
         menu.weekStart,
-        cutoffMode === 'GENERAL'
-          ? { mode: 'GENERAL', generalTime }
-          : {
-              mode: 'DAILY',
-              days: menu.days.map((day) => ({
-                date: day.date,
-                cutoffTime: dailyCutoffs[day.date],
-              })),
-            },
+        { cutoffTime: mondayCutoffTime },
       );
       applyMenu(saved);
-      setCutoffMessage('El horario quedó guardado y ya controla el cierre de solicitudes.');
+      setCutoffMessage(`El cierre público del lunes quedó configurado a las ${saved.publicOrderingCutoffTime}.`);
     } catch (saveError) {
       setCutoffError(saveError instanceof Error ? saveError.message : 'No fue posible guardar el horario');
     } finally {
@@ -212,45 +198,30 @@ export function WeeklyMenuAdminPage() {
           <div className="cutoff-settings-heading">
             <div>
               <span className="card-eyebrow">Cierre de solicitudes</span>
-              <h2 id="cutoff-settings-title">Horario para enviar los totales al Chef</h2>
-              <p>Al llegar esta hora, ya no se podrán crear, cambiar ni cancelar comidas del mismo día.</p>
+              <h2 id="cutoff-settings-title">Cierre de reservaciones del lunes</h2>
+              <p>Al publicar el menú se habilitan las reservaciones. El lunes, al llegar esta hora, el pedido semanal queda cerrado para todos los empleados.</p>
             </div>
             <span className="cutoff-clock" aria-hidden="true">◷</span>
           </div>
 
-          <div className="cutoff-mode-selector" role="radiogroup" aria-label="Tipo de horario">
-            <label className={cutoffMode === 'GENERAL' ? 'is-selected' : ''}>
-              <input type="radio" name="cutoff-mode" value="GENERAL" checked={cutoffMode === 'GENERAL'} disabled={isSaving || isSavingCutoffs} onChange={() => { setCutoffMode('GENERAL'); setCutoffMessage(null); }} />
-              <span /><div><strong>Un horario general</strong><small>La misma hora de lunes a viernes</small></div>
-            </label>
-            <label className={cutoffMode === 'DAILY' ? 'is-selected' : ''}>
-              <input type="radio" name="cutoff-mode" value="DAILY" checked={cutoffMode === 'DAILY'} disabled={isSaving || isSavingCutoffs} onChange={() => { setCutoffMode('DAILY'); setCutoffMessage(null); }} />
-              <span /><div><strong>Horario por día</strong><small>Una hora distinta para cada fecha</small></div>
+          <div className="monday-cutoff-control">
+            <div>
+              <span>Lunes de la semana seleccionada</span>
+              <strong>{formatDate(menu.weekStart)}</strong>
+              <small>Hora predeterminada: 09:30 · Zona horaria de Guatemala</small>
+            </div>
+            <label>
+              <span>Hora de cierre</span>
+              <input type="time" value={mondayCutoffTime} disabled={isSaving || isSavingCutoffs} onChange={(event) => { setMondayCutoffTime(event.target.value); setCutoffMessage(null); }} />
             </label>
           </div>
-
-          {cutoffMode === 'GENERAL' ? (
-            <label className="general-cutoff-time">
-              <span>Hora de cierre para toda la semana</span>
-              <input type="time" value={generalTime} disabled={isSaving || isSavingCutoffs} onChange={(event) => { setGeneralTime(event.target.value); setCutoffMessage(null); }} />
-            </label>
-          ) : (
-            <div className="daily-cutoff-grid">
-              {menu.days.map((day) => (
-                <label key={day.date}>
-                  <span><strong>{day.dayName}</strong><small>{formatDate(day.date)}</small></span>
-                  <input type="time" value={dailyCutoffs[day.date] ?? '08:00'} disabled={isSaving || isSavingCutoffs} onChange={(event) => { setDailyCutoffs((current) => ({ ...current, [day.date]: event.target.value })); setCutoffMessage(null); }} />
-                </label>
-              ))}
-            </div>
-          )}
 
           {cutoffError && <div className="form-error cutoff-feedback" role="alert">{cutoffError}</div>}
           {cutoffMessage && <div className="users-success cutoff-feedback" role="status">{cutoffMessage}</div>}
           <div className="cutoff-settings-footer">
-            <span>Los horarios corresponden a Guatemala.</span>
-            <button className="button button-primary" type="button" disabled={isSaving || isSavingCutoffs || (cutoffMode === 'GENERAL' ? !generalTime : menu.days.some((day) => !dailyCutoffs[day.date]))} onClick={() => void handleSaveCutoffs()}>
-              {isSavingCutoffs ? <><span className="button-spinner" /> Guardando…</> : 'Guardar horario de cierre'}
+            <span>Después del cierre, únicamente RH podrá realizar excepciones desde Modificar almuerzo.</span>
+            <button className="button button-primary" type="button" disabled={isSaving || isSavingCutoffs || !mondayCutoffTime} onClick={() => void handleSaveCutoffs()}>
+              {isSavingCutoffs ? <><span className="button-spinner" /> Guardando…</> : 'Guardar cierre del lunes'}
             </button>
           </div>
         </section>

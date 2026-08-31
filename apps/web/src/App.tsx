@@ -12,12 +12,14 @@ import { UsersPage } from './pages/UsersPage';
 import { MealTransfersPage } from './pages/MealTransfersPage';
 import { WeeklyMealOrderPage } from './pages/WeeklyMealOrderPage';
 import { WeeklyMenuAdminPage } from './pages/WeeklyMenuAdminPage';
+import { MealAdjustmentsPage } from './pages/MealAdjustmentsPage';
+import { MealAuditExportPage } from './pages/MealAuditExportPage';
 import { getCurrentSession, logout } from './services/auth.service';
 import type { AuthUser } from './types/auth';
 
 const pagesByRole: Record<AuthUser['role'], AppPage[]> = {
-  ADMIN: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'employees', 'deliveries', 'pending', 'transfers', 'users', 'consultation'],
-  RH: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'employees', 'deliveries', 'pending', 'transfers', 'consultation'],
+  ADMIN: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'employees', 'meal-audit', 'deliveries', 'pending', 'transfers', 'users', 'consultation'],
+  RH: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'meal-adjustments', 'employees', 'meal-audit', 'deliveries', 'pending', 'transfers', 'consultation'],
   CHEF: ['home', 'daily-results', 'deliveries', 'pending'],
 };
 
@@ -88,9 +90,11 @@ function App() {
     consultation: <ConsultationPage />,
     'weekly-order': <WeeklyMealOrderPage />,
     'weekly-menu': <WeeklyMenuAdminPage />,
+    'meal-adjustments': <MealAdjustmentsPage />,
     home: <HomePage />,
-    'daily-results': <DailyResultsPage />,
+    'daily-results': <DailyResultsPage role={user?.role} />,
     employees: <EmployeesPage />,
+    'meal-audit': <MealAuditExportPage />,
     deliveries: <MealRequestsPage />,
     pending: <PendingMealsPage />,
     transfers: <MealTransfersPage />,

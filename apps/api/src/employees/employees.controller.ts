@@ -24,6 +24,11 @@ export class EmployeesController {
     return this.employeesService.findAll(query.search, query.active);
   }
 
+  @Get('departments')
+  findDepartments() {
+    return this.employeesService.findDepartments();
+  }
+
   @Get(':employeeCode')
   findOne(@Param('employeeCode') employeeCode: string) {
     return this.employeesService.findOne(employeeCode);

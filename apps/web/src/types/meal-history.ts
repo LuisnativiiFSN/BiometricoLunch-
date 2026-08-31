@@ -11,6 +11,7 @@ export interface MealHistoryItem {
 export interface PendingMealItem {
   employeeCode: string;
   name: string;
+  department: string;
   meal: string;
 }
 
@@ -19,6 +20,8 @@ export interface TodayMealSummary {
   collected: number;
   pending: number;
   duplicateAttempts: number;
+  cutoffTime: string;
+  exportAvailable: boolean;
 }
 
 export interface AvailableMeal {

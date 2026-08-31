@@ -13,6 +13,23 @@ import type { UpdateEmployeeDto } from './dto/update-employee.dto.js';
 export class EmployeesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  async findDepartments() {
+    const employees = await this.prisma.employee.findMany({
+      select: { department: true },
+      orderBy: { department: 'asc' },
+    });
+    const departments = new Map<string, string>();
+    for (const employee of employees) {
+      const department = employee.department.trim().replace(/\s+/g, ' ');
+      if (!department) continue;
+      const key = this.getDepartmentKey(department);
+      if (!departments.has(key)) departments.set(key, department);
+    }
+    return [...departments.values()].sort((left, right) =>
+      left.localeCompare(right, 'es', { sensitivity: 'base' }),
+    );
+  }
+
   findAll(search?: string, active?: boolean) {
     const normalizedSearch = search?.trim();
     const where: Prisma.EmployeeWhereInput = {
@@ -64,13 +81,16 @@ export class EmployeesService {
   }
 
   async create(createEmployeeDto: CreateEmployeeDto) {
+    const department = await this.resolveDepartment(
+      createEmployeeDto.department,
+    );
     try {
       return await this.prisma.employee.create({
         data: {
           employeeCode: createEmployeeDto.employeeCode,
           name: createEmployeeDto.name,
           email: createEmployeeDto.email,
-          department: createEmployeeDto.department,
+          department,
           ...(createEmployeeDto.active === undefined
             ? {}
             : { active: createEmployeeDto.active }),
@@ -82,6 +102,9 @@ export class EmployeesService {
   }
 
   async update(employeeCode: string, updateEmployeeDto: UpdateEmployeeDto) {
+    const department = updateEmployeeDto.department === undefined
+      ? undefined
+      : await this.resolveDepartment(updateEmployeeDto.department);
     const data: Prisma.EmployeeUpdateInput = {
       ...(updateEmployeeDto.employeeCode === undefined
         ? {}
@@ -92,9 +115,9 @@ export class EmployeesService {
       ...(updateEmployeeDto.email === undefined
         ? {}
         : { email: updateEmployeeDto.email }),
-      ...(updateEmployeeDto.department === undefined
+      ...(department === undefined
         ? {}
-        : { department: updateEmployeeDto.department }),
+        : { department }),
       ...(updateEmployeeDto.active === undefined
         ? {}
         : { active: updateEmployeeDto.active }),
@@ -127,5 +150,23 @@ export class EmployeesService {
     }
 
     throw error;
+  }
+
+  private async resolveDepartment(value: string) {
+    const normalized = value.trim().replace(/\s+/g, ' ');
+    const departments = await this.findDepartments();
+    return departments.find(
+      (department) =>
+        this.getDepartmentKey(department) === this.getDepartmentKey(normalized),
+    ) ?? normalized;
+  }
+
+  private getDepartmentKey(value: string) {
+    return value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLocaleUpperCase('es');
   }
 }
