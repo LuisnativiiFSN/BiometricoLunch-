@@ -285,9 +285,9 @@ desactivarse ni cambiar su contraseña desde el portal.
 Permisos del portal:
 
 - Público: `Encargar comida`, `Iniciar sesión` y `Consulta`.
-- Administrador: todas las páginas visibles, configuración del menú semanal, horarios de cierre y administración de usuarios.
-- Recursos Humanos: resultados semanales, resultados de hoy, menú semanal, horarios de cierre, encargar comida, empleados, entregas, pendientes, transferencias y consulta.
-- Chef: resultados semanales, resultados de hoy, entregas y pendientes. No tiene acceso a Encargar comida, Consulta, Empleados ni a la configuración del menú.
+- Administrador: resultados, configuración del menú semanal, horarios de cierre, empleados, reportes para el proveedor, auditoría y nómina, transferencias y administración de usuarios. No accede a la modificación excepcional de almuerzos.
+- Recursos Humanos: resultados semanales, resultados de hoy, menú semanal, horarios de cierre, encargar comida, modificación de almuerzo, empleados, reportes para el proveedor, auditoría y nómina, entregas, pendientes, transferencias y consulta.
+- Chef: resultados semanales, resultados de hoy, entregas y pendientes. No tiene acceso a Encargar comida, Consulta, Empleados, Reportes ni a la configuración del menú.
 
 ## Menú y reservaciones semanales desde el portal
 
@@ -302,25 +302,51 @@ al comenzar ese lunes. La activación solo ocurre si los cinco días están
 completos. El tablero de resultados conserva siempre el rango laboral de lunes
 a viernes, incluso cuando la semana comienza en un mes y termina en el siguiente.
 
-La página pública `Encargar comida` no requiere iniciar sesión. El empleado
-ingresa su código, revisa sus selecciones existentes y elige como máximo una
-comida por día. Al guardar, el sistema crea los días nuevos, actualiza los que
-cambiaron y cancela los que se dejaron sin selección, todo dentro de una sola
-operación. Antes de confirmar, el portal presenta el nombre, código y comidas
-seleccionadas. Las fechas anteriores, las reservaciones entregadas o transferidas
-y el día actual después del cierre quedan protegidos contra cambios. La hora se
-configura desde `Menú semanal` por Administrador o Recursos Humanos. Puede usarse
-una sola hora para toda la semana o una hora distinta para cada día. Si una
-semana todavía no tiene configuración guardada, se utiliza
-`MEAL_ORDER_CUTOFF_TIME` y su valor predeterminado es `08:00`.
+La página pública `Encargar comida` no requiere iniciar sesión. Su ventana está
+abierta únicamente el lunes, desde que Recursos Humanos publica el menú hasta la
+hora de cierre configurada. El valor predeterminado es `09:30`, hora de
+Guatemala, y solo esa hora del lunes puede editarse. Durante ese periodo el empleado ingresa su código y elige como máximo
+una comida para cada día de la semana. Al guardar, el sistema crea los días
+nuevos, actualiza los que cambiaron y cancela los que se dejaron sin selección,
+todo dentro de una sola operación. Al llegar la hora configurada todas las selecciones quedan
+fijas; de martes a domingo la API rechaza cualquier solicitud pública aunque se
+intente llamar directamente. El portal actualiza el estado de la ventana cada
+minuto y muestra al empleado que debe comunicarse con Recursos Humanos.
+
+`Menú semanal` muestra un único control de cierre para el lunes. No existen
+horarios editables para martes, miércoles, jueves o viernes. Después del cierre,
+la única vía para crear, cambiar o cancelar una reservación es la pantalla
+privada de Recursos Humanos.
+
+### Modificación excepcional por Recursos Humanos
+
+La página `Modificar almuerzo` es exclusiva del rol `RH`; Administrador, Chef y
+usuarios sin sesión reciben acceso denegado desde la API. Recursos Humanos busca
+el código del empleado y selecciona un día de la semana actual. Puede agregar un
+almuerzo cuando todavía no existe reservación, cambiarlo por otra opción del
+mismo día o cancelarlo. El motivo es
+obligatorio y debe tener al menos cinco caracteres.
+
+No se pueden modificar días anteriores, comidas entregadas ni reservaciones
+transferidas. Cada excepción guarda en `audit_logs` el pedido anterior, el
+resultado, el motivo, la cuenta RH responsable y la fecha del movimiento. La
+misma pantalla presenta las últimas modificaciones para facilitar su revisión.
 
 La información está dividida en dos pantallas para Administrador, Recursos
 Humanos y Chef. `Resultados semanales` muestra el total de reservaciones de la
 semana, el resumen por día, el total de cada plato y barras comparativas para
-preparar el reporte del Chef. Cada día también indica su hora de cierre y si aún
-está recibiendo solicitudes. `Resultados de hoy` contiene únicamente el gráfico
+preparar el reporte del proveedor. Los días ya no muestran horarios de cierre
+individuales. `Resultados de hoy` contiene únicamente el gráfico
 de entregadas contra pendientes y la lista de personas que todavía no han
 reclamado su comida.
+
+Después del cierre semanal configurado para el lunes, `Resultados de hoy`
+habilita para Administrador y Recursos Humanos la descarga de los pendientes en
+formato Excel. Chef puede consultar la operación, pero no ve el botón y la API
+rechaza directamente su intento de exportación. El archivo incluye
+departamento, código, nombre y comida solicitada; se ordena por departamento y
+luego por nombre. La API también valida el horario, por lo que la exportación no
+puede forzarse antes del cierre mediante una llamada directa.
 
 Después de abrir el portal o iniciar sesión, la primera pantalla es `Encargar
 comida`. Las rutas
@@ -346,7 +372,7 @@ Después de transferir de D1 hacia D2:
 
 - D1 deja de aparecer en pendientes y su código ya no puede retirar la comida.
 - D2 aparece como pendiente, genera la entrega y queda asociado al posible ticket.
-- la consulta mensual excluye la reservación de D1 y la suma al recuento de D2.
+- la consulta individual excluye la reservación de D1 y la suma al recuento de D2.
 - `meal_requests.employee_id` se guarda con el código de D2 cuando se entrega.
 - `audit_logs` guarda una acción `TRANSFER`, el usuario RH que la realizó, la
   reservación afectada, el origen, el beneficiario y la fecha.
@@ -359,29 +385,63 @@ pueden transferirse. `POST /api/transfers` realiza el movimiento y
 `GET /api/transfers` devuelve el historial. Los tres endpoints aceptan una
 sesión activa de Administrador o Recursos Humanos y rechazan al rol Chef.
 
-### Consulta mensual para empleados
+### Reportes para el proveedor, auditoría y nómina
 
-La página pública `Consulta` permite ingresar un código de empleado y seleccionar
-el mes actual o cualquier mes anterior. La API rechaza meses futuros aunque se
-intente omitir la restricción del selector del portal.
+La página privada `Reportes` permite a Administrador y Recursos Humanos elegir
+entre pedidos para el proveedor, auditoría individual y el consolidado general para
+nómina. La opción no aparece para el público ni para Chef y los endpoints
+también rechazan esos accesos directamente.
 
-Cuando no existe una sesión activa, `Consulta` es la pantalla inicial del portal;
-`Iniciar sesión` sigue disponible en el menú para el personal autorizado. La
-gráfica semanal utiliza exclusivamente rangos laborales de lunes a viernes. No
-crea columnas para sábados o domingos y las reservaciones de fin de semana no se
-suman a las barras, aunque el total mensual conserva todos los registros.
+En `Pedidos para el proveedor` se puede recorrer la semana actual y cualquier semana
+anterior. Los botones para exportar el día seleccionado y la semana completa
+permanecen disponibles sin depender del día de la semana. Cada clic consulta de
+nuevo SQL Server y genera un archivo actualizado con todas las reservaciones,
+sin limitarse a las pendientes. El detalle contiene código, nombre,
+departamento, comida y día solicitado; se ordena por departamento, código y
+fecha para mantener juntas todas las comidas de una persona. La hoja `Totales
+por día` muestra cada opción del menú, incluso cuando tiene cero solicitudes,
+además de subtotales diarios y el total general.
 
-`GET /api/consultations/employees/:employeeCode/monthly?month=YYYY-MM` devuelve
-solamente código, nombre y datos de almuerzos; no expone correo, departamento,
-huellas ni información de acceso. El resultado incluye:
+La auditoría individual y nómina aceptan una fecha inicial y una fecha final
+para descargar un Excel de hasta 366 días.
 
-- total de almuerzos reservados en el mes
+El archivo identifica al empleado, el departamento y el período. Incluye totales
+reservados, entregados y pendientes, además de una fila por reservación con
+fecha, día, comida, cantidad, estado y fecha de entrega. Los platos pendientes
+se incluyen en el total cobrable. Cada
+descarga crea una entrada en `audit_logs` para conservar la trazabilidad.
+
+El reporte de nómina conserva la estructura del reporte de vales: `Codigo
+Colaborador`, `Nombres`, `Centro de trabajo`, `Platos Consumidos` y `Rango De
+Fechas`, con filtros y una fila total. Agrupa todas las reservaciones del período
+por empleado y las cuenta aunque no hayan sido retiradas. Cuando una comida fue
+transferida, se excluye del propietario original y se cobra únicamente al
+beneficiario. La descarga también queda registrada en `audit_logs`.
+
+### Consulta de almuerzos para empleados
+
+La página pública `Consulta` permite ingresar un código de empleado y revisar las
+últimas cuatro semanas laborales o seleccionar un período específico. La
+consulta principal siempre agrupa cuatro bloques completos de lunes a viernes,
+aunque una semana comience en un mes y termine en el siguiente.
+
+Cuando no existe una sesión activa, `Consulta` continúa disponible en el menú y
+`Iniciar sesión` permite acceder a las funciones internas. La gráfica se muestra
+únicamente en la consulta de cuatro semanas; el modo por período presenta
+totales y detalle sin gráfica. Entregados y pendientes forman parte del total
+cobrable.
+
+Los endpoints públicos de consulta devuelven solamente código, nombre y datos de
+almuerzos; no exponen correo, departamento, huellas ni información de acceso. El
+resultado incluye:
+
+- total de almuerzos reservados en el período
 - total entregado y pendiente
-- agrupación por semanas de lunes a domingo
+- agrupación por cuatro semanas laborales cuando corresponde
 - fecha, nombre, cantidad, estado y hora de entrega de cada almuerzo
 
 Un almuerzo se considera entregado cuando la reservación tiene una solicitud
-`APPROVED`; de lo contrario aparece pendiente. Los meses sin movimientos se
+`APPROVED`; de lo contrario aparece pendiente. Los períodos sin movimientos se
 muestran con totales en cero y una tabla vacía.
 
 El administrador puede crear únicamente cuentas `RH` y `CHEF`, cambiar sus

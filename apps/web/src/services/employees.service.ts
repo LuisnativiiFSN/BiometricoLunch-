@@ -27,6 +27,10 @@ export function getEmployees(options: GetEmployeesOptions = {}) {
   return apiRequest<Employee[]>(`/employees${suffix}`, { signal });
 }
 
+export function getEmployeeDepartments(signal?: AbortSignal) {
+  return apiRequest<string[]>('/employees/departments', { signal });
+}
+
 export function createEmployee(input: CreateEmployeeInput) {
   return apiRequest<Employee>('/employees', {
     method: 'POST',

@@ -17,8 +17,11 @@ export interface WeeklyMenuDay {
 export interface WeeklyMenu {
   weekStart: string;
   weekEnd: string;
-  cutoffMode: 'GENERAL' | 'DAILY';
-  orderingCutoffTime: string | null;
+  cutoffMode: 'GENERAL';
+  orderingCutoffTime: string;
+  publicOrderingCutoffTime: string;
+  publicOrderingOpen: boolean;
+  publicOrderingLockReason: string | null;
   isReady: boolean;
   isPublished: boolean;
   publicationStatus: 'PENDING' | 'SCHEDULED' | 'PUBLISHED';
@@ -69,4 +72,59 @@ export interface SavedWeeklySelections extends EmployeeWeeklySelections {
     updated: number;
     deleted: number;
   };
+}
+
+export interface MealAdjustmentContext {
+  employee: {
+    code: string;
+    name: string;
+    department: string;
+  };
+  weekStart: string;
+  weekEnd: string;
+  days: Array<{
+    date: string;
+    dayName: string;
+    canModify: boolean;
+    lockReason: string | null;
+    meals: WeeklyMealOption[];
+    reservation: {
+      id: string;
+      mealId: string;
+      mealName: string;
+      canModify: boolean;
+      lockReason: string | null;
+    } | null;
+  }>;
+}
+
+export interface MealAdjustmentResult {
+  status: 'ADDED' | 'CHANGED' | 'CANCELLED';
+  employee: {
+    employeeCode: string;
+    employeeName: string;
+    department: string;
+    date: string;
+  };
+  previousMeal: string | null;
+  newMeal: string | null;
+  reason: string;
+  modifiedBy: string;
+}
+
+export interface MealAdjustmentHistoryItem {
+  id: string;
+  reservationId: string | null;
+  employee: {
+    code: string;
+    name: string;
+    department: string;
+  };
+  date: string;
+  action: 'ADD' | 'CHANGE' | 'CANCEL';
+  previousMeal: string | null;
+  newMeal: string | null;
+  reason: string;
+  modifiedBy: string;
+  modifiedAt: string;
 }
