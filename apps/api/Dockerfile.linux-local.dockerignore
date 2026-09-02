@@ -1,0 +1,17 @@
+**
+
+!BiometricoLunch-/
+!BiometricoLunch-/package.json
+!BiometricoLunch-/pnpm-lock.yaml
+!BiometricoLunch-/pnpm-workspace.yaml
+!BiometricoLunch-/apps/
+!BiometricoLunch-/apps/api/
+!BiometricoLunch-/apps/api/**
+
+**/.env
+**/node_modules
+**/dist
+**/bin
+**/obj
+**/*.tsbuildinfo
+**/*.log

@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comedor-api
+  namespace: app-comedor-fsn
+  labels:
+    app.kubernetes.io/name: comedor-api
+    app.kubernetes.io/part-of: app-comedor-fsn
+spec:
+  # Se mantiene una replica porque las autorizaciones biometricas temporales
+  # actualmente viven en memoria dentro de la API.
+  replicas: 1
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: comedor-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: comedor-api
+        app.kubernetes.io/part-of: app-comedor-fsn
+    spec:
+      os:
+        name: windows
+      nodeSelector:
+        kubernetes.io/os: windows
+        node.kubernetes.io/windows-build: "10.0.20348"
+      containers:
+        - name: api
+          image: 10.0.40.10:5000/app-comedor-fsn-api:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "3000"
+            - name: WEB_ORIGIN
+              value: http://app-comedor-fsn.fasani.local
+            - name: BIOMETRIC_MATCHER_PATH
+              value: C:\app\matcher\MarcacionComida.BiometricMatcher.exe
+            - name: BIOMETRIC_MATCH_THRESHOLD
+              value: "21474"
+            - name: DB_ENCRYPT
+              value: "true"
+            - name: DB_TRUST_SERVER_CERTIFICATE
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-trust-server-certificate
+            - name: DB_SERVER
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-server
+            - name: DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-port
+            - name: DB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-database
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-password
+            - name: DB_TLS_SERVER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: db-tls-server-name
+                  optional: true
+            - name: BIOMETRIC_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: biometric-encryption-key
+            - name: AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: comedor-api-secrets
+                  key: auth-jwt-secret
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            windowsOptions:
+              runAsUserName: ContainerUser
+      terminationGracePeriodSeconds: 30

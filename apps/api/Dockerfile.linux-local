@@ -1,0 +1,30 @@
+# Imagen exclusiva para validar localmente API, frontend y SQL Server en Docker Desktop Linux.
+# No contiene el Runtime DigitalPersona ni puede ejecutar Matcher.exe.
+
+FROM node:24-bookworm-slim AS build
+WORKDIR /src/BiometricoLunch-
+
+RUN corepack enable && corepack prepare pnpm@11.19.0 --activate
+
+COPY BiometricoLunch-/package.json BiometricoLunch-/pnpm-lock.yaml BiometricoLunch-/pnpm-workspace.yaml ./
+COPY BiometricoLunch-/apps/api/package.json apps/api/package.json
+RUN pnpm install --frozen-lockfile --filter @comedor/api...
+
+COPY BiometricoLunch-/apps/api/ apps/api/
+# Prisma solo necesita que la variable exista para generar el cliente; no abre
+# una conexion durante esta etapa y el valor no pasa a la imagen final.
+ENV DATABASE_URL="sqlserver://localhost:1433;database=build;user=build;password=BuildOnly123!;encrypt=true;trustServerCertificate=true"
+RUN pnpm --filter @comedor/api prisma:generate && \
+    pnpm --filter @comedor/api build && \
+    pnpm --filter @comedor/api deploy --prod --legacy /out/api
+
+FROM node:24-bookworm-slim AS runtime
+ENV NODE_ENV=production \
+    PORT=3000
+
+WORKDIR /app
+COPY --from=build --chown=node:node /out/api/ ./
+
+EXPOSE 3000
+USER node
+CMD ["node", "dist/main.js"]

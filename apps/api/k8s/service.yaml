@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: comedor-api
+  namespace: app-comedor-fsn
+  labels:
+    app.kubernetes.io/name: comedor-api
+    app.kubernetes.io/part-of: app-comedor-fsn
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: comedor-api
+  ports:
+    - name: http
+      protocol: TCP
+      port: 3000
+      targetPort: http
