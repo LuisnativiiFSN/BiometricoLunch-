@@ -7,9 +7,9 @@ metadata:
     app.kubernetes.io/name: comedor-api
     app.kubernetes.io/part-of: app-comedor-fsn
 spec:
-  # Se mantiene una replica porque las autorizaciones biometricas temporales
-  # actualmente viven en memoria dentro de la API.
-  replicas: 1
+  # Las autorizaciones temporales viven en SQL Server y admiten consumo
+  # atomico desde varias replicas.
+  replicas: 2
   revisionHistoryLimit: 3
   strategy:
     type: RollingUpdate
@@ -26,10 +26,16 @@ spec:
         app.kubernetes.io/part-of: app-comedor-fsn
     spec:
       os:
-        name: windows
+        name: linux
       nodeSelector:
-        kubernetes.io/os: windows
-        node.kubernetes.io/windows-build: "10.0.20348"
+        kubernetes.io/os: linux
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: api
           image: 10.0.40.10:5000/app-comedor-fsn-api:1.0.0
@@ -45,10 +51,6 @@ spec:
               value: "3000"
             - name: WEB_ORIGIN
               value: http://app-comedor-fsn.fasani.local
-            - name: BIOMETRIC_MATCHER_PATH
-              value: C:\app\matcher\MarcacionComida.BiometricMatcher.exe
-            - name: BIOMETRIC_MATCH_THRESHOLD
-              value: "21474"
             - name: DB_ENCRYPT
               value: "true"
             - name: DB_TRUST_SERVER_CERTIFICATE
@@ -114,7 +116,7 @@ spec:
             failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /api
+              path: /api/health
               port: http
             initialDelaySeconds: 20
             periodSeconds: 20
@@ -128,6 +130,9 @@ spec:
               cpu: "1"
               memory: 1Gi
           securityContext:
-            windowsOptions:
-              runAsUserName: ContainerUser
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
       terminationGracePeriodSeconds: 30

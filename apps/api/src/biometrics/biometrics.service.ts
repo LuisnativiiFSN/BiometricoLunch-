@@ -5,39 +5,49 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
   MAX_TEMPLATE_BYTES,
   MIN_TEMPLATE_BYTES,
 } from './biometric.constants.js';
 import { BiometricEncryptionService } from './biometric-encryption.service.js';
-import { BiometricMatcherService } from './biometric-matcher.service.js';
 import type { AuthorizeEnrollmentDto } from './dto/authorize-enrollment.dto.js';
 import type { CreateEnrollmentDto } from './dto/create-enrollment.dto.js';
-import type { IdentifyFingerprintDto } from './dto/identify-fingerprint.dto.js';
 
 const ENROLLMENT_AUTHORIZED_DEPARTMENT = 'GESTION HUMANA-FSN';
 const ENROLLMENT_AUTHORIZATION_TTL_MS = 2 * 60 * 1000;
+const DEFAULT_GALLERY_TTL_SECONDS = 15 * 60;
+const MIN_GALLERY_TTL_SECONDS = 5 * 60;
+const MAX_GALLERY_TTL_SECONDS = 24 * 60 * 60;
 
-type EnrollmentAuthorization = {
-  operatorEmployeeCode: string;
-  targetEmployeeCode: string;
+type GalleryEnrollment = {
+  id: string;
+  employeeId: string;
   fingerPosition: string;
-  expiresAt: number;
+  templateFormat: string;
+  templateData: Uint8Array;
+  updatedAt: Date;
+  employee: {
+    name: string;
+    updatedAt: Date;
+  };
+};
+
+export type BiometricGalleryPreparation = {
+  etag: string;
+  version: string;
+  expiresAt: Date;
+  enrollmentCount: number;
+  notModified: boolean;
+  payload?: Buffer;
 };
 
 @Injectable()
 export class BiometricsService {
-  private readonly enrollmentAuthorizations = new Map<
-    string,
-    EnrollmentAuthorization
-  >();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly encryption: BiometricEncryptionService,
-    private readonly matcher: BiometricMatcherService,
   ) {}
 
   async enroll(dto: CreateEnrollmentDto) {
@@ -137,24 +147,26 @@ export class BiometricsService {
   }
 
   async authorizeEnrollment(dto: AuthorizeEnrollmentDto) {
-    const identification = await this.identify(dto);
-    if (identification.status === 'NOT_IDENTIFIED') {
-      return { status: 'NOT_IDENTIFIED' as const };
-    }
-    if (identification.status === 'AMBIGUOUS') {
-      return { status: 'AMBIGUOUS' as const };
-    }
-
-    const operator = await this.prisma.employee.findUnique({
-      where: { employeeCode: identification.employee.employeeCode },
+    const operatorEnrollment = await this.prisma.fingerprint.findUnique({
+      where: { id: dto.operatorEnrollmentId },
       select: {
-        employeeCode: true,
-        name: true,
-        department: true,
         active: true,
+        employeeId: true,
+        employee: {
+          select: {
+            employeeCode: true,
+            name: true,
+            department: true,
+            active: true,
+          },
+        },
       },
     });
+    const operator = operatorEnrollment?.employee;
     if (
+      !operatorEnrollment?.active ||
+      operatorEnrollment.employeeId !== dto.operatorEmployeeCode ||
+      operator?.employeeCode !== dto.operatorEmployeeCode ||
       !operator?.active ||
       this.normalizeDepartment(operator.department) !==
         ENROLLMENT_AUTHORIZED_DEPARTMENT
@@ -162,20 +174,51 @@ export class BiometricsService {
       return { status: 'NOT_AUTHORIZED' as const };
     }
 
-    this.removeExpiredAuthorizations();
+    const target = await this.prisma.employee.findUnique({
+      where: { employeeCode: dto.targetEmployeeCode },
+      select: { active: true },
+    });
+    if (!target) {
+      throw new NotFoundException('Empleado objetivo no encontrado');
+    }
+    if (!target.active) {
+      throw new BadRequestException('El empleado objetivo está inactivo');
+    }
+
     const authorizationToken = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + ENROLLMENT_AUTHORIZATION_TTL_MS;
-    this.enrollmentAuthorizations.set(authorizationToken, {
-      operatorEmployeeCode: operator.employeeCode,
-      targetEmployeeCode: dto.targetEmployeeCode,
-      fingerPosition: dto.fingerPosition,
-      expiresAt,
+    const tokenHash = this.hashAuthorizationToken(authorizationToken);
+    const expiresAt = new Date(Date.now() + ENROLLMENT_AUTHORIZATION_TTL_MS);
+    await this.prisma.$transaction(async (transaction) => {
+      const authorization = await transaction.enrollmentAuthorization.create({
+        data: {
+          tokenHash,
+          operatorEmployeeCode: operator.employeeCode,
+          operatorEnrollmentId: dto.operatorEnrollmentId,
+          targetEmployeeCode: dto.targetEmployeeCode,
+          fingerPosition: dto.fingerPosition,
+          expiresAt,
+        },
+        select: { id: true },
+      });
+      await transaction.auditLog.create({
+        data: {
+          entityName: 'enrollment_authorizations',
+          entityId: authorization.id,
+          action: 'CREATE',
+          actorEmployeeId: operator.employeeCode,
+          newValues: JSON.stringify({
+            targetEmployeeCode: dto.targetEmployeeCode,
+            fingerPosition: dto.fingerPosition,
+            expiresAt: expiresAt.toISOString(),
+          }),
+        },
+      });
     });
 
     return {
       status: 'AUTHORIZED' as const,
       authorizationToken,
-      expiresAt: new Date(expiresAt).toISOString(),
+      expiresAt: expiresAt.toISOString(),
       operator: {
         employeeCode: operator.employeeCode,
         name: operator.name,
@@ -183,94 +226,110 @@ export class BiometricsService {
     };
   }
 
-  async identify(dto: IdentifyFingerprintDto) {
-    const candidate = this.decodeTemplate(dto.templateData);
-    const decryptedGallery: Array<{
-      enrollmentId: string;
-      employeeCode: string;
-      employeeName: string;
-      templateData: Buffer;
-    }> = [];
-
-    try {
-      const enrollments = await this.prisma.fingerprint.findMany({
-        where: { active: true },
-        select: {
-          id: true,
-          employeeId: true,
-          fingerPosition: true,
-          templateFormat: true,
-          templateData: true,
-          employee: { select: { name: true } },
+  async prepareGallery(
+    ifNoneMatch: string | undefined,
+    kioskDeviceId: string,
+  ): Promise<BiometricGalleryPreparation> {
+    const enrollments = await this.prisma.fingerprint.findMany({
+      where: {
+        active: true,
+        employee: { active: true },
+      },
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        employeeId: true,
+        fingerPosition: true,
+        templateFormat: true,
+        templateData: true,
+        updatedAt: true,
+        employee: {
+          select: { name: true, updatedAt: true },
         },
-      });
+      },
+    });
+    const version = this.createGalleryVersion(enrollments);
+    const etag = `"gallery-${version}"`;
+    const expiresAt = new Date(Date.now() + this.getGalleryTtlMilliseconds());
 
-      for (const enrollment of enrollments) {
-        if (enrollment.templateFormat !== dto.templateFormat) continue;
+    if (this.etagMatches(ifNoneMatch, etag)) {
+      await this.auditGallerySynchronization(
+        kioskDeviceId,
+        version,
+        enrollments.length,
+        'NOT_MODIFIED',
+        expiresAt,
+      );
+      return {
+        etag,
+        version,
+        expiresAt,
+        enrollmentCount: enrollments.length,
+        notModified: true,
+      };
+    }
+
+    const plaintextTemplates: Buffer[] = [];
+    try {
+      const items = enrollments.map((enrollment) => {
         const context = BiometricEncryptionService.createContext(
           enrollment.id,
           enrollment.fingerPosition,
           enrollment.templateFormat,
         );
+        let plaintext: Buffer;
         try {
-          decryptedGallery.push({
-            enrollmentId: enrollment.id,
-            employeeCode: enrollment.employeeId,
-            employeeName: enrollment.employee.name,
-            templateData: this.encryption.decrypt(
-              enrollment.templateData,
-              context,
-            ),
-          });
+          plaintext = this.encryption.decrypt(enrollment.templateData, context);
         } catch {
           throw new InternalServerErrorException(
-            'No fue posible leer la galeria biometrica activa',
+            'No fue posible construir la galeria biometrica activa',
           );
         }
-      }
-
-      if (decryptedGallery.length === 0) {
-        return { status: 'NOT_IDENTIFIED' as const };
-      }
-
-      const result = await this.matcher.match(candidate, decryptedGallery);
-      if (result.status === 'NOT_IDENTIFIED') {
-        return { status: 'NOT_IDENTIFIED' as const };
-      }
-      if (result.status === 'AMBIGUOUS') {
-        return { status: 'AMBIGUOUS' as const };
-      }
-      if (
-        result.status !== 'IDENTIFIED' ||
-        !result.enrollmentId ||
-        !result.employeeCode
-      ) {
-        throw new InternalServerErrorException(
-          'El componente biometrico devolvio un resultado invalido',
-        );
-      }
-
-      const matched = decryptedGallery.find(
-        (item) =>
-          item.enrollmentId === result.enrollmentId &&
-          item.employeeCode === result.employeeCode,
+        plaintextTemplates.push(plaintext);
+        return {
+          enrollmentId: enrollment.id,
+          employeeCode: enrollment.employeeId,
+          employeeName: enrollment.employee.name,
+          templateFormat: enrollment.templateFormat,
+          templateData: plaintext.toString('base64'),
+        };
+      });
+      const payload = Buffer.from(
+        JSON.stringify({
+          version,
+          generatedAt: new Date().toISOString(),
+          expiresAt: expiresAt.toISOString(),
+          enrollments: items,
+        }),
+        'utf8',
       );
-      if (!matched) {
-        throw new InternalServerErrorException(
-          'El resultado biometrico no pertenece a la galeria activa',
-        );
-      }
 
+      await this.auditGallerySynchronization(
+        kioskDeviceId,
+        version,
+        enrollments.length,
+        'DOWNLOADED',
+        expiresAt,
+      );
       return {
-        status: 'IDENTIFIED' as const,
-        employee: {
-          employeeCode: matched.employeeCode,
-          name: matched.employeeName,
-        },
+        etag,
+        version,
+        expiresAt,
+        enrollmentCount: enrollments.length,
+        notModified: false,
+        payload,
       };
+    } catch (error) {
+      await this.auditGallerySynchronization(
+        kioskDeviceId,
+        version,
+        enrollments.length,
+        'FAILED',
+        expiresAt,
+      );
+      throw error;
     } finally {
-      candidate.fill(0);
-      for (const item of decryptedGallery) item.templateData.fill(0);
+      for (const plaintext of plaintextTemplates) plaintext.fill(0);
     }
   }
 
@@ -314,46 +373,143 @@ export class BiometricsService {
     targetEmployeeCode: string,
     fingerPosition: string,
   ) {
-    this.removeExpiredAuthorizations();
-    const authorization = this.enrollmentAuthorizations.get(token);
-    this.enrollmentAuthorizations.delete(token);
-    if (
-      !authorization ||
-      authorization.expiresAt <= Date.now() ||
-      authorization.targetEmployeeCode !== targetEmployeeCode ||
-      authorization.fingerPosition !== fingerPosition
-    ) {
-      throw new ForbiddenException(
-        'Se requiere una autorizacion biometrica vigente de Gestion Humana',
-      );
-    }
+    const tokenHash = this.hashAuthorizationToken(token);
+    const now = new Date();
+    await this.prisma.$transaction(async (transaction) => {
+      const authorization = await transaction.enrollmentAuthorization.findUnique({
+        where: { tokenHash },
+        select: {
+          id: true,
+          operatorEmployeeCode: true,
+          operatorEnrollmentId: true,
+          targetEmployeeCode: true,
+          fingerPosition: true,
+          expiresAt: true,
+          consumedAt: true,
+        },
+      });
+      if (
+        !authorization ||
+        authorization.consumedAt ||
+        authorization.expiresAt <= now ||
+        authorization.targetEmployeeCode !== targetEmployeeCode ||
+        authorization.fingerPosition !== fingerPosition
+      ) {
+        throw new ForbiddenException(
+          'Se requiere una autorizacion biometrica vigente de Gestion Humana',
+        );
+      }
 
-    const operator = await this.prisma.employee.findUnique({
-      where: { employeeCode: authorization.operatorEmployeeCode },
-      select: { active: true, department: true },
+      const operatorEnrollment = await transaction.fingerprint.findUnique({
+        where: { id: authorization.operatorEnrollmentId },
+        select: {
+          active: true,
+          employeeId: true,
+          employee: { select: { active: true, department: true } },
+        },
+      });
+      if (
+        !operatorEnrollment?.active ||
+        operatorEnrollment.employeeId !== authorization.operatorEmployeeCode ||
+        !operatorEnrollment.employee.active ||
+        this.normalizeDepartment(operatorEnrollment.employee.department) !==
+          ENROLLMENT_AUTHORIZED_DEPARTMENT
+      ) {
+        throw new ForbiddenException(
+          'La persona que autorizo ya no pertenece a Gestion Humana',
+        );
+      }
+
+      const consumed = await transaction.enrollmentAuthorization.updateMany({
+        where: {
+          id: authorization.id,
+          consumedAt: null,
+          expiresAt: { gt: now },
+        },
+        data: { consumedAt: now },
+      });
+      if (consumed.count !== 1) {
+        throw new ForbiddenException(
+          'La autorizacion biometrica ya fue utilizada',
+        );
+      }
     });
-    if (
-      !operator?.active ||
-      this.normalizeDepartment(operator.department) !==
-        ENROLLMENT_AUTHORIZED_DEPARTMENT
-    ) {
-      throw new ForbiddenException(
-        'La persona que autorizo ya no pertenece a Gestion Humana',
-      );
-    }
   }
 
-  private removeExpiredAuthorizations() {
-    const now = Date.now();
-    for (const [token, authorization] of this.enrollmentAuthorizations) {
-      if (authorization.expiresAt <= now) {
-        this.enrollmentAuthorizations.delete(token);
-      }
-    }
+  private hashAuthorizationToken(token: string) {
+    return createHash('sha256').update(token, 'utf8').digest('hex');
   }
 
   private normalizeDepartment(value: string | null) {
     return value?.trim().toUpperCase() ?? '';
+  }
+
+  private createGalleryVersion(enrollments: GalleryEnrollment[]) {
+    const hash = createHash('sha256');
+    hash.update('MCG1\n', 'utf8');
+    for (const enrollment of enrollments) {
+      hash.update(enrollment.id, 'utf8');
+      hash.update('\0', 'utf8');
+      hash.update(enrollment.employeeId, 'utf8');
+      hash.update('\0', 'utf8');
+      hash.update(enrollment.employee.name, 'utf8');
+      hash.update('\0', 'utf8');
+      hash.update(enrollment.fingerPosition, 'utf8');
+      hash.update('\0', 'utf8');
+      hash.update(enrollment.templateFormat, 'utf8');
+      hash.update('\0', 'utf8');
+      hash.update(enrollment.updatedAt.toISOString(), 'utf8');
+      hash.update('\0', 'utf8');
+      hash.update(enrollment.employee.updatedAt.toISOString(), 'utf8');
+      hash.update('\n', 'utf8');
+    }
+    return hash.digest('base64url');
+  }
+
+  private etagMatches(ifNoneMatch: string | undefined, etag: string) {
+    if (!ifNoneMatch) return false;
+    return ifNoneMatch
+      .split(',')
+      .map((value) => value.trim())
+      .some((value) => value === '*' || value === etag || value === `W/${etag}`);
+  }
+
+  private getGalleryTtlMilliseconds() {
+    const configured = Number(
+      process.env.BIOMETRIC_GALLERY_TTL_SECONDS ?? DEFAULT_GALLERY_TTL_SECONDS,
+    );
+    const seconds = Number.isSafeInteger(configured)
+      ? Math.min(
+          MAX_GALLERY_TTL_SECONDS,
+          Math.max(MIN_GALLERY_TTL_SECONDS, configured),
+        )
+      : DEFAULT_GALLERY_TTL_SECONDS;
+    return seconds * 1000;
+  }
+
+  private async auditGallerySynchronization(
+    kioskDeviceId: string,
+    version: string,
+    enrollmentCount: number,
+    result: 'DOWNLOADED' | 'NOT_MODIFIED' | 'FAILED',
+    expiresAt: Date,
+  ) {
+    await this.prisma.auditLog.create({
+      data: {
+        entityName: 'kiosk_devices',
+        entityId: kioskDeviceId,
+        // UPDATE pertenece al contrato histórico de auditoría. El detalle
+        // identifica que se trata de una sincronización de galería.
+        action: 'UPDATE',
+        newValues: JSON.stringify({
+          operation: 'BIOMETRIC_GALLERY_SYNC',
+          version,
+          enrollmentCount,
+          result,
+          expiresAt: expiresAt.toISOString(),
+        }),
+      },
+    });
   }
 
   private readonly metadataSelection = {

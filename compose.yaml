@@ -1,0 +1,50 @@
+services:
+  api:
+    container_name: app-comedor-fsn-api-local
+    image: app-comedor-fsn-api:local
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file:
+      - ./apps/api/.env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      WEB_ORIGIN: http://localhost:8083
+      COOKIE_SECURE: "false"
+      ENABLE_KIOSK_MOCK: "false"
+      DB_PASSWORD: ${MC_DB_PASSWORD:?Defina MC_DB_PASSWORD desde apps/api/.env}
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    read_only: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
+  web:
+    container_name: app-comedor-fsn-web-local
+    image: app-comedor-fsn-web:local
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        VITE_API_URL: /api
+    ports:
+      - "8083:8080"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    depends_on:
+      api:
+        condition: service_healthy

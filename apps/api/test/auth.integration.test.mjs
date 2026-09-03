@@ -14,11 +14,30 @@ const TEST_PASSWORD = 'AutomaticTest!2026';
 const MANAGED_PASSWORD = 'ManagedInitial!2026';
 const MANAGED_NEW_PASSWORD = 'ManagedUpdated!2026';
 const TEST_MEAL_NAME = 'AUTO-MEAL-ALMUERZO ADMINISTRATIVO';
+const TEST_KIOSK_NAME = 'AUTO-KIOSK-AUTH';
 const prisma = new PrismaService();
 let app;
 let baseUrl;
 
 async function cleanup() {
+  const kioskDevices = await prisma.kioskDevice.findMany({
+    where: { name: TEST_KIOSK_NAME },
+    select: { id: true },
+  });
+  const kioskDeviceIds = kioskDevices.map((device) => device.id);
+
+  if (kioskDeviceIds.length > 0) {
+    await prisma.$transaction([
+      prisma.auditLog.deleteMany({
+        where: {
+          entityName: 'kiosk_devices',
+          entityId: { in: kioskDeviceIds },
+        },
+      }),
+      prisma.kioskDevice.deleteMany({ where: { id: { in: kioskDeviceIds } } }),
+    ]);
+  }
+
   const users = await prisma.user.findMany({
     where: { username: { in: [...TEST_USERS, MANAGED_USER] } },
     select: { id: true },
@@ -123,7 +142,7 @@ after(async () => {
 });
 
 describe('autenticación y permisos por rol', () => {
-  test('bloquea las rutas internas sin sesión y mantiene salud/kiosco públicos', async () => {
+  test('bloquea las rutas internas y de comida sin sesión, manteniendo salud pública', async () => {
     assert.equal((await api('/meals/pending-today')).status, 401);
     assert.equal((await api('/meals/pending-today/export')).status, 401);
     assert.equal((await api('/meal-planning/adjustments')).status, 401);
@@ -136,8 +155,219 @@ describe('autenticación y permisos por rol', () => {
           body: JSON.stringify({ employeeId: 'NO-EXISTE' }),
         })
       ).status,
-      201,
+      401,
     );
+  });
+
+  test('provisiona, valida, rota y revoca una credencial de kiosco sin exponer su hash', async () => {
+    const [adminCookie, rhCookie] = await Promise.all([
+      login(TEST_USERS[0]),
+      login(TEST_USERS[1]),
+    ]);
+
+    assert.equal(
+      (
+        await api('/kiosk-devices', rhCookie, {
+          method: 'POST',
+          body: JSON.stringify({ name: TEST_KIOSK_NAME }),
+        })
+      ).status,
+      403,
+    );
+
+    const createResponse = await api('/kiosk-devices', adminCookie, {
+      method: 'POST',
+      body: JSON.stringify({ name: TEST_KIOSK_NAME }),
+    });
+    assert.equal(createResponse.status, 201);
+    const created = await createResponse.json();
+    assert.match(created.token, /^kiosk_[A-Za-z0-9_-]{43}$/);
+    assert.equal('tokenHash' in created, false);
+
+    const stored = await prisma.kioskDevice.findUniqueOrThrow({
+      where: { id: created.id },
+    });
+    assert.equal(stored.tokenHash.length, 64);
+    assert.notEqual(stored.tokenHash, created.token);
+
+    const listResponse = await api('/kiosk-devices', adminCookie);
+    assert.equal(listResponse.status, 200);
+    const listed = (await listResponse.json()).find(
+      (device) => device.id === created.id,
+    );
+    assert.ok(listed);
+    assert.equal('token' in listed, false);
+    assert.equal('tokenHash' in listed, false);
+
+    process.env.KIOSK_AUTH_REQUIRED = 'true';
+    try {
+      const mealRequest = JSON.stringify({ employeeId: 'NO-EXISTE' });
+      assert.equal(
+        (
+          await api('/kiosk/request-meal', undefined, {
+            method: 'POST',
+            body: mealRequest,
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await api('/kiosk/request-meal', undefined, {
+            method: 'POST',
+            body: mealRequest,
+            headers: { Authorization: 'Bearer kiosk_token-invalido' },
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await api('/kiosk/request-meal', undefined, {
+            method: 'POST',
+            body: mealRequest,
+            headers: { Authorization: `Bearer ${created.token}` },
+          })
+        ).status,
+        201,
+      );
+
+      assert.equal((await api('/biometrics/gallery')).status, 401);
+      assert.equal(
+        (
+          await api('/biometrics/gallery', undefined, {
+            headers: { Authorization: 'Bearer kiosk_token-invalido' },
+          })
+        ).status,
+        401,
+      );
+      const galleryResponse = await api('/biometrics/gallery', undefined, {
+        headers: {
+          Authorization: `Bearer ${created.token}`,
+          'Accept-Encoding': 'gzip',
+        },
+      });
+      assert.equal(galleryResponse.status, 200);
+      assert.equal(galleryResponse.headers.get('content-encoding'), 'gzip');
+      const galleryEtag = galleryResponse.headers.get('etag');
+      assert.ok(galleryEtag);
+      assert.ok(galleryResponse.headers.get('expires'));
+      const galleryPayload = await galleryResponse.json();
+      assert.ok(galleryPayload.version);
+      assert.ok(Array.isArray(galleryPayload.enrollments));
+      assert.equal(
+        JSON.stringify(galleryPayload).includes(
+          process.env.BIOMETRIC_ENCRYPTION_KEY ?? '__SECRET_NOT_SET__',
+        ),
+        false,
+      );
+
+      const notModified = await api('/biometrics/gallery', undefined, {
+        headers: {
+          Authorization: `Bearer ${created.token}`,
+          'If-None-Match': galleryEtag,
+        },
+      });
+      assert.equal(notModified.status, 304);
+      assert.equal(notModified.headers.get('etag'), galleryEtag);
+
+      const accessed = await prisma.kioskDevice.findUniqueOrThrow({
+        where: { id: created.id },
+      });
+      assert.ok(accessed.lastAccessedAt);
+
+      const rotateResponse = await api(
+        `/kiosk-devices/${created.id}/rotate`,
+        adminCookie,
+        { method: 'POST' },
+      );
+      assert.equal(rotateResponse.status, 201);
+      const rotated = await rotateResponse.json();
+      assert.notEqual(rotated.token, created.token);
+      assert.ok(rotated.rotatedAt);
+      assert.equal('tokenHash' in rotated, false);
+
+      assert.equal(
+        (
+          await api('/kiosk/request-meal', undefined, {
+            method: 'POST',
+            body: mealRequest,
+            headers: { Authorization: `Bearer ${created.token}` },
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await api('/biometrics/gallery', undefined, {
+            headers: { Authorization: `Bearer ${rotated.token}` },
+          })
+        ).status,
+        200,
+      );
+      assert.equal(
+        (
+          await api('/kiosk/request-meal', undefined, {
+            method: 'POST',
+            body: mealRequest,
+            headers: { Authorization: `Bearer ${rotated.token}` },
+          })
+        ).status,
+        201,
+      );
+
+      const revokeResponse = await api(
+        `/kiosk-devices/${created.id}/revoke`,
+        adminCookie,
+        { method: 'PATCH' },
+      );
+      assert.equal(revokeResponse.status, 200);
+      assert.equal((await revokeResponse.json()).active, false);
+      assert.equal(
+        (
+          await api('/kiosk/request-meal', undefined, {
+            method: 'POST',
+            body: mealRequest,
+            headers: { Authorization: `Bearer ${rotated.token}` },
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await api('/biometrics/gallery', undefined, {
+            headers: { Authorization: `Bearer ${rotated.token}` },
+          })
+        ).status,
+        401,
+      );
+      assert.equal(
+        (
+          await api('/biometrics/enrollment-authorizations', undefined, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${rotated.token}` },
+            body: JSON.stringify({
+              operatorEmployeeCode: 'HR-REVOKED',
+              operatorEnrollmentId: '6b74cfab-51f6-4e7d-a735-e32406f5943f',
+              targetEmployeeCode: 'TARGET-REVOKED',
+              fingerPosition: 'RIGHT_INDEX',
+            }),
+          })
+        ).status,
+        401,
+      );
+    } finally {
+      delete process.env.KIOSK_AUTH_REQUIRED;
+    }
+
+    const deviceAudits = await prisma.auditLog.findMany({
+      where: { entityName: 'kiosk_devices', entityId: created.id },
+    });
+    const synchronizationAudits = deviceAudits.filter((audit) =>
+      audit.newValues?.includes('BIOMETRIC_GALLERY_SYNC'),
+    );
+    assert.equal(synchronizationAudits.length, 3);
+    assert.equal(deviceAudits.length - synchronizationAudits.length, 3);
   });
 
   test('aplica las páginas y acciones permitidas para Admin, RH y Chef', async () => {

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { after, before, describe, test } from 'node:test';
 
 const { BiometricEncryptionService } = await import(
@@ -17,17 +17,11 @@ const { PrismaService } = await import('../dist/prisma/prisma.service.js');
 const TEST_EMPLOYEE = 'AUTO-BIO-ENROLL';
 const TEST_HR_EMPLOYEE = 'AUTO-BIO-HR';
 const TEST_NON_HR_EMPLOYEE = 'AUTO-BIO-NON-HR';
+const TEST_GALLERY_EMPLOYEE = 'AUTO-BIO-GALLERY';
+const TEST_GALLERY_DEVICE = 'auto-biometric-gallery-test-device';
 const prisma = new PrismaService();
 const encryption = new BiometricEncryptionService();
-const matcher = {
-  calls: [],
-  result: { status: 'NOT_IDENTIFIED', thresholdScore: 21474 },
-  async match(candidate, candidates) {
-    this.calls.push({ candidateLength: candidate.length, candidates });
-    return this.result;
-  },
-};
-const service = new BiometricsService(prisma, encryption, matcher);
+const service = new BiometricsService(prisma, encryption);
 const controller = new BiometricsController(service);
 let hrEnrollmentId;
 let nonHrEnrollmentId;
@@ -45,7 +39,32 @@ async function cleanup() {
     TEST_EMPLOYEE,
     TEST_HR_EMPLOYEE,
     TEST_NON_HR_EMPLOYEE,
+    TEST_GALLERY_EMPLOYEE,
   ];
+  const authorizations = await prisma.enrollmentAuthorization.findMany({
+    where: {
+      OR: [
+        { operatorEmployeeCode: { in: employeeCodes } },
+        { targetEmployeeCode: { in: employeeCodes } },
+      ],
+    },
+    select: { id: true },
+  });
+  await prisma.auditLog.deleteMany({
+    where: {
+      OR: [
+        { entityName: 'kiosk_devices', entityId: TEST_GALLERY_DEVICE },
+        {
+          entityName: 'enrollment_authorizations',
+          entityId: { in: authorizations.map((item) => item.id) },
+        },
+        { actorEmployeeId: { in: employeeCodes } },
+      ],
+    },
+  });
+  await prisma.enrollmentAuthorization.deleteMany({
+    where: { id: { in: authorizations.map((item) => item.id) } },
+  });
   await prisma.fingerprint.deleteMany({
     where: { employeeId: { in: employeeCodes } },
   });
@@ -82,25 +101,13 @@ async function authorizeEnrollment(
   fingerPosition = 'RIGHT_INDEX',
   operator = 'hr',
 ) {
-  const candidate = randomBytes(480);
   const isHr = operator === 'hr';
-  matcher.result = {
-    status: 'IDENTIFIED',
-    enrollmentId: isHr ? hrEnrollmentId : nonHrEnrollmentId,
-    employeeCode: isHr ? TEST_HR_EMPLOYEE : TEST_NON_HR_EMPLOYEE,
-    score: 100,
-    thresholdScore: 21474,
-  };
-  try {
-    return await controller.authorizeEnrollment({
-      targetEmployeeCode,
-      fingerPosition,
-      templateFormat: 'ANSI_378_2004',
-      templateData: candidate.toString('base64'),
-    });
-  } finally {
-    candidate.fill(0);
-  }
+  return controller.authorizeEnrollment({
+    operatorEmployeeCode: isHr ? TEST_HR_EMPLOYEE : TEST_NON_HR_EMPLOYEE,
+    operatorEnrollmentId: isHr ? hrEnrollmentId : nonHrEnrollmentId,
+    targetEmployeeCode,
+    fingerPosition,
+  });
 }
 
 before(async () => {
@@ -165,6 +172,13 @@ describe('POST /api/biometrics/enrollment-authorizations', () => {
     assert.ok(response.authorizationToken);
     assert.ok(response.expiresAt);
     assert.equal('templateData' in response, false);
+    const tokenHash = createHash('sha256')
+      .update(response.authorizationToken, 'utf8')
+      .digest('hex');
+    const stored = await prisma.enrollmentAuthorization.findUniqueOrThrow({
+      where: { tokenHash },
+    });
+    assert.notEqual(stored.tokenHash, response.authorizationToken);
   });
 
   test('rechaza una huella de otro departamento', async () => {
@@ -179,6 +193,75 @@ describe('POST /api/biometrics/enrollment-authorizations', () => {
 });
 
 describe('POST /api/biometrics/enrollments', () => {
+  test('una autorización se consume una sola vez', async () => {
+    const authorization = await authorizeEnrollment();
+    const template = randomBytes(512).toString('base64');
+    const dto = {
+      authorizationToken: authorization.authorizationToken,
+      employeeCode: TEST_EMPLOYEE,
+      fingerPosition: 'RIGHT_INDEX',
+      templateFormat: 'ANSI_378_2004',
+      templateData: template,
+      quality: 80,
+    };
+
+    await controller.enroll(dto);
+    await assert.rejects(
+      controller.enroll(dto),
+      /autorizacion biometrica vigente/i,
+    );
+    await prisma.fingerprint.deleteMany({
+      where: { employeeId: TEST_EMPLOYEE },
+    });
+  });
+
+  test('rechaza una autorización expirada almacenada en SQL Server', async () => {
+    const authorization = await authorizeEnrollment();
+    const tokenHash = createHash('sha256')
+      .update(authorization.authorizationToken, 'utf8')
+      .digest('hex');
+    await prisma.enrollmentAuthorization.update({
+      where: { tokenHash },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    await assert.rejects(
+      controller.enroll({
+        authorizationToken: authorization.authorizationToken,
+        employeeCode: TEST_EMPLOYEE,
+        fingerPosition: 'RIGHT_INDEX',
+        templateFormat: 'ANSI_378_2004',
+        templateData: randomBytes(512).toString('base64'),
+        quality: 80,
+      }),
+      /autorizacion biometrica vigente/i,
+    );
+  });
+
+  test('dos réplicas concurrentes solo pueden consumir una autorización', async () => {
+    const secondReplica = new BiometricsService(prisma, encryption);
+    const secondController = new BiometricsController(secondReplica);
+    const authorization = await authorizeEnrollment();
+    const dto = {
+      authorizationToken: authorization.authorizationToken,
+      employeeCode: TEST_EMPLOYEE,
+      fingerPosition: 'RIGHT_INDEX',
+      templateFormat: 'ANSI_378_2004',
+      templateData: randomBytes(512).toString('base64'),
+      quality: 80,
+    };
+
+    const results = await Promise.allSettled([
+      controller.enroll(dto),
+      secondController.enroll(dto),
+    ]);
+    assert.equal(results.filter((item) => item.status === 'fulfilled').length, 1);
+    assert.equal(results.filter((item) => item.status === 'rejected').length, 1);
+    await prisma.fingerprint.deleteMany({
+      where: { employeeId: TEST_EMPLOYEE },
+    });
+  });
+
   test('rechaza guardar sin autorizacion biometrica previa', async () => {
     const template = randomBytes(512);
     await assert.rejects(
@@ -296,121 +379,106 @@ describe('POST /api/biometrics/enrollments', () => {
   });
 
   test('rechaza un empleado inexistente antes de guardar', async () => {
-    const fakeTemplate = randomBytes(512);
-    const authorization = await authorizeEnrollment('NO-EXISTE-BIOMETRIA');
     await assert.rejects(
-      controller.enroll({
-        authorizationToken: authorization.authorizationToken,
-        employeeCode: 'NO-EXISTE-BIOMETRIA',
-        fingerPosition: 'RIGHT_INDEX',
-        templateFormat: 'ANSI_378_2004',
-        templateData: fakeTemplate.toString('base64'),
-        quality: 80,
-      }),
-      /Empleado no encontrado/,
+      authorizeEnrollment('NO-EXISTE-BIOMETRIA'),
+      /Empleado objetivo no encontrado/,
     );
-    fakeTemplate.fill(0);
   });
 });
 
-describe('POST /api/biometrics/identify', () => {
-  test('identifica mediante matcher interno y responde solo metadatos', async () => {
-    const enrolledTemplate = randomBytes(512);
-    const authorization = await authorizeEnrollment();
-    const enrollment = await controller.enroll({
-      authorizationToken: authorization.authorizationToken,
-      employeeCode: TEST_EMPLOYEE,
-      fingerPosition: 'RIGHT_INDEX',
-      templateFormat: 'ANSI_378_2004',
-      templateData: enrolledTemplate.toString('base64'),
-      quality: 88,
-    });
-    const candidate = randomBytes(480);
-    matcher.calls.length = 0;
-    matcher.result = {
-      status: 'IDENTIFIED',
-      enrollmentId: enrollment.enrollment.id,
-      employeeCode: TEST_EMPLOYEE,
-      score: 100,
-      thresholdScore: 21474,
-    };
-
-    const response = await controller.identify({
-      templateFormat: 'ANSI_378_2004',
-      templateData: candidate.toString('base64'),
-    });
-
-    assert.equal(response.status, 'IDENTIFIED');
-    assert.equal(response.employee.employeeCode, TEST_EMPLOYEE);
-    assert.equal('templateData' in response, false);
-    assert.equal(matcher.calls.length, 1);
-    assert.equal(matcher.calls[0].candidateLength, candidate.length);
-    const testCandidate = matcher.calls[0].candidates.find(
-      (item) => item.employeeCode === TEST_EMPLOYEE,
-    );
-    assert.ok(testCandidate);
-
-    enrolledTemplate.fill(0);
-    candidate.fill(0);
-  });
-
-  test('sin coincidencia no devuelve empleado', async () => {
-    const candidate = randomBytes(480);
-    matcher.result = { status: 'NOT_IDENTIFIED', thresholdScore: 21474 };
-
-    const response = await controller.identify({
-      templateFormat: 'ANSI_378_2004',
-      templateData: candidate.toString('base64'),
-    });
-
-    assert.deepEqual(response, { status: 'NOT_IDENTIFIED' });
-    candidate.fill(0);
-  });
-
-  test('excluye enrolamientos inactivos de la galeria', async () => {
-    await prisma.fingerprint.updateMany({
-      where: { employeeId: TEST_EMPLOYEE },
-      data: { active: false },
-    });
-    const candidate = randomBytes(480);
-
-    const response = await controller.identify({
-      templateFormat: 'ANSI_378_2004',
-      templateData: candidate.toString('base64'),
-    });
-
-    assert.deepEqual(response, { status: 'NOT_IDENTIFIED' });
-    const latestCall = matcher.calls.at(-1);
-    assert.ok(latestCall);
-    assert.equal(
-      latestCall.candidates.some(
-        (item) => item.employeeCode === TEST_EMPLOYEE,
-      ),
-      false,
-    );
-    candidate.fill(0);
-  });
-
-  test('controla un sobre cifrado corrupto sin enviarlo al matcher', async () => {
-    await prisma.fingerprint.create({
+describe('GET /api/biometrics/gallery', () => {
+  test('versiona la galeria, excluye registros inactivos y no expone secretos', async () => {
+    await prisma.employee.create({
       data: {
-        employeeId: TEST_EMPLOYEE,
-        fingerPosition: 'RIGHT_INDEX',
-        templateFormat: 'ANSI_378_2004',
-        templateData: randomBytes(128),
-        quality: 50,
+        employeeCode: TEST_GALLERY_EMPLOYEE,
+        name: 'Empleado de galeria automatica',
+        email: 'galeria@pruebas.local',
+        department: 'Pruebas',
         active: true,
       },
     });
-    const candidate = randomBytes(480);
+    const enrollmentId = await createStoredFingerprint(TEST_GALLERY_EMPLOYEE);
 
-    await assert.rejects(
-      controller.identify({
-        templateFormat: 'ANSI_378_2004',
-        templateData: candidate.toString('base64'),
-      }),
-      /galeria biometrica activa/,
+    const first = await service.prepareGallery(undefined, TEST_GALLERY_DEVICE);
+    assert.equal(first.notModified, false);
+    assert.ok(first.payload);
+    assert.match(first.etag, /^"gallery-[A-Za-z0-9_-]{43}"$/);
+    assert.ok(first.expiresAt.getTime() > Date.now());
+    const payloadText = first.payload.toString('utf8');
+    const payload = JSON.parse(payloadText);
+    const item = payload.enrollments.find(
+      (candidate) => candidate.enrollmentId === enrollmentId,
     );
-    candidate.fill(0);
+    assert.ok(item);
+    assert.equal(item.employeeCode, TEST_GALLERY_EMPLOYEE);
+    assert.equal(item.employeeName, 'Empleado de galeria automatica');
+    assert.equal(item.templateFormat, 'ANSI_378_2004');
+    assert.ok(item.templateData);
+    assert.equal(
+      payloadText.includes(process.env.BIOMETRIC_ENCRYPTION_KEY),
+      false,
+    );
+    first.payload.fill(0);
+
+    const unchanged = await service.prepareGallery(
+      first.etag,
+      TEST_GALLERY_DEVICE,
+    );
+    assert.equal(unchanged.notModified, true);
+    assert.equal(unchanged.payload, undefined);
+
+    await prisma.fingerprint.update({
+      where: { id: enrollmentId },
+      data: { active: false },
+    });
+    const inactiveEnrollment = await service.prepareGallery(
+      undefined,
+      TEST_GALLERY_DEVICE,
+    );
+    const inactiveEnrollmentPayload = JSON.parse(
+      inactiveEnrollment.payload.toString('utf8'),
+    );
+    assert.equal(
+      inactiveEnrollmentPayload.enrollments.some(
+        (candidate) => candidate.enrollmentId === enrollmentId,
+      ),
+      false,
+    );
+    inactiveEnrollment.payload.fill(0);
+
+    await prisma.fingerprint.update({
+      where: { id: enrollmentId },
+      data: { active: true },
+    });
+    await prisma.employee.update({
+      where: { employeeCode: TEST_GALLERY_EMPLOYEE },
+      data: { active: false },
+    });
+    const inactiveEmployee = await service.prepareGallery(
+      undefined,
+      TEST_GALLERY_DEVICE,
+    );
+    const inactiveEmployeePayload = JSON.parse(
+      inactiveEmployee.payload.toString('utf8'),
+    );
+    assert.equal(
+      inactiveEmployeePayload.enrollments.some(
+        (candidate) => candidate.enrollmentId === enrollmentId,
+      ),
+      false,
+    );
+    inactiveEmployee.payload.fill(0);
+
+    const audits = await prisma.auditLog.findMany({
+      where: { entityName: 'kiosk_devices', entityId: TEST_GALLERY_DEVICE },
+    });
+    assert.equal(audits.length, 4);
+    assert.ok(
+      audits.every(
+        (audit) =>
+          !audit.newValues?.includes('templateData') &&
+          !audit.newValues?.includes(process.env.BIOMETRIC_ENCRYPTION_KEY),
+      ),
+    );
   });
 });

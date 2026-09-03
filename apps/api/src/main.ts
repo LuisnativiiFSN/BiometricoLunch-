@@ -7,12 +7,13 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const port = Number(process.env.PORT ?? 3000);
 
+  app.enableShutdownHooks();
   app.setGlobalPrefix('api');
   app.use(cookieParser());
   app.enableCors({
     origin: process.env.WEB_ORIGIN ?? 'http://localhost:5173',
     credentials: true,
-    exposedHeaders: ['Content-Disposition'],
+    exposedHeaders: ['Content-Disposition', 'ETag', 'Expires'],
   });
   app.useGlobalPipes(
     new ValidationPipe({

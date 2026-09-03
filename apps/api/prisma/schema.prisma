@@ -8,18 +8,20 @@ datasource db {
 }
 
 model Employee {
-  employeeCode            String            @id @map("employee_code") @db.VarChar(50)
-  name                    String            @db.VarChar(150)
-  email                   String            @db.VarChar(254)
-  department              String            @db.VarChar(100)
-  active                  Boolean           @default(true)
-  createdAt               DateTime          @default(now()) @map("created_at") @db.DateTime2
-  updatedAt               DateTime          @updatedAt @map("updated_at") @db.DateTime2
-  fingerprints            Fingerprint[]
-  mealRequests            MealRequest[]
-  mealReservations        MealReservation[] @relation("ReservationEmployee")
-  transferredReservations MealReservation[] @relation("ReservationTransferEmployee")
-  auditLogs               AuditLog[]
+  employeeCode                       String                    @id @map("employee_code") @db.VarChar(50)
+  name                               String                    @db.VarChar(150)
+  email                              String                    @db.VarChar(254)
+  department                         String                    @db.VarChar(100)
+  active                             Boolean                   @default(true)
+  createdAt                          DateTime                  @default(now()) @map("created_at") @db.DateTime2
+  updatedAt                          DateTime                  @updatedAt @map("updated_at") @db.DateTime2
+  fingerprints                       Fingerprint[]
+  mealRequests                       MealRequest[]
+  mealReservations                   MealReservation[]         @relation("ReservationEmployee")
+  transferredReservations            MealReservation[]         @relation("ReservationTransferEmployee")
+  auditLogs                          AuditLog[]
+  enrollmentAuthorizationsAsOperator EnrollmentAuthorization[] @relation("EnrollmentAuthorizationOperator")
+  enrollmentAuthorizationsAsTarget   EnrollmentAuthorization[] @relation("EnrollmentAuthorizationTarget")
 
   @@map("employees")
 }
@@ -37,6 +39,18 @@ model User {
   auditLogs      AuditLog[]
 
   @@map("users")
+}
+
+model KioskDevice {
+  id             String    @id @default(uuid()) @db.UniqueIdentifier
+  name           String    @db.VarChar(100)
+  tokenHash      String    @unique(map: "kiosk_devices_token_hash_key") @map("token_hash") @db.Char(64)
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.DateTime2
+  rotatedAt      DateTime? @map("rotated_at") @db.DateTime2
+  lastAccessedAt DateTime? @map("last_accessed_at") @db.DateTime2
+
+  @@map("kiosk_devices")
 }
 
 model Meal {
@@ -65,19 +79,40 @@ model MealOrderCutoff {
 }
 
 model Fingerprint {
-  id             String   @id @default(uuid()) @db.UniqueIdentifier
-  employeeId     String   @map("employee_id") @db.VarChar(50)
-  fingerPosition String   @map("finger_position") @db.VarChar(50)
-  templateData   Bytes    @map("template_data") @db.VarBinary(Max)
-  templateFormat String   @map("template_format") @db.VarChar(50)
-  quality        Int
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime2
-  updatedAt      DateTime @updatedAt @map("updated_at") @db.DateTime2
-  employee       Employee @relation(fields: [employeeId], references: [employeeCode], onDelete: Cascade, onUpdate: Cascade)
+  id                     String                    @id @default(uuid()) @db.UniqueIdentifier
+  employeeId             String                    @map("employee_id") @db.VarChar(50)
+  fingerPosition         String                    @map("finger_position") @db.VarChar(50)
+  templateData           Bytes                     @map("template_data") @db.VarBinary(Max)
+  templateFormat         String                    @map("template_format") @db.VarChar(50)
+  quality                Int
+  active                 Boolean                   @default(true)
+  createdAt              DateTime                  @default(now()) @map("created_at") @db.DateTime2
+  updatedAt              DateTime                  @updatedAt @map("updated_at") @db.DateTime2
+  employee               Employee                  @relation(fields: [employeeId], references: [employeeCode], onDelete: Cascade, onUpdate: Cascade)
+  operatorAuthorizations EnrollmentAuthorization[]
 
   @@index([employeeId])
   @@map("fingerprints")
+}
+
+model EnrollmentAuthorization {
+  id                   String      @id @default(uuid()) @db.UniqueIdentifier
+  tokenHash            String      @unique(map: "enrollment_authorizations_token_hash_key") @map("token_hash") @db.Char(64)
+  operatorEmployeeCode String      @map("operator_employee_code") @db.VarChar(50)
+  operatorEnrollmentId String      @map("operator_enrollment_id") @db.UniqueIdentifier
+  targetEmployeeCode   String      @map("target_employee_code") @db.VarChar(50)
+  fingerPosition       String      @map("finger_position") @db.VarChar(50)
+  createdAt            DateTime    @default(now()) @map("created_at") @db.DateTime2
+  expiresAt            DateTime    @map("expires_at") @db.DateTime2
+  consumedAt           DateTime?   @map("consumed_at") @db.DateTime2
+  operator             Employee    @relation("EnrollmentAuthorizationOperator", fields: [operatorEmployeeCode], references: [employeeCode], onDelete: NoAction, onUpdate: NoAction)
+  targetEmployee       Employee    @relation("EnrollmentAuthorizationTarget", fields: [targetEmployeeCode], references: [employeeCode], onDelete: NoAction, onUpdate: NoAction)
+  operatorEnrollment   Fingerprint @relation(fields: [operatorEnrollmentId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([expiresAt, consumedAt], map: "enrollment_authorizations_expiry_consumed_idx")
+  @@index([operatorEmployeeCode], map: "enrollment_authorizations_operator_idx")
+  @@index([targetEmployeeCode], map: "enrollment_authorizations_target_idx")
+  @@map("enrollment_authorizations")
 }
 
 model MealRequest {
