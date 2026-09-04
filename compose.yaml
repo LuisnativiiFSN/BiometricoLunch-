@@ -1,7 +1,7 @@
 services:
   api:
     container_name: app-comedor-fsn-api-local
-    image: app-comedor-fsn-api:local
+    image: 10.0.40.10:5000/app-comedor-fsn-api:1.0.0
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -27,7 +27,7 @@ services:
 
   web:
     container_name: app-comedor-fsn-web-local
-    image: app-comedor-fsn-web:local
+    image: 10.0.40.10:5000/app-comedor-fsn-web:1.0.0
     build:
       context: .
       dockerfile: apps/web/Dockerfile
