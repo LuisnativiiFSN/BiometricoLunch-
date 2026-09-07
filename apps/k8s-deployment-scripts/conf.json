@@ -1,0 +1,43 @@
+{   "description": "Este archivo centraliza la configuración de todos los proyectos. Úsalo con: $config = Get-Content config.json | ConvertFrom-Json",
+    "cluster": {
+        "ingressIP": "10.0.40.162",
+        "apiServer": "10.0.40.160:6443" 
+        
+    },
+    "projects": [
+        {
+            "name": "ExampleAPI",
+            "namespace": "dev-sandbox",
+            "path": "..\\ExampleAPI\\k8s",
+            "dockerImage": "10.0.40.10:5000/image-api:1.0.0",
+            "port": 5024,
+            "healthCheck": "/health",
+            "swagger": "/swagger/index.html"
+        },
+        {
+            "name": "api",
+            "namespace": "app-comedor-fsn",
+            "path": "..\\api\\k8s",
+            "dockerImage": "10.0.40.10:5000/app-comedor-fsn-api:1.0.0",
+            "port": 3000,
+            "healthCheck": "/api/health",
+            "swagger": ""
+        },
+        {
+            "name": "web",
+            "namespace": "app-comedor-fsn",
+            "path": "..\\web\\k8s",
+            "dockerImage": "10.0.40.10:5000/app-comedor-fsn-web:1.0.0",
+            "port": 8080,
+            "healthCheck": "",
+            "swagger": ""
+        }
+    ],
+    "scripts": {
+        "basePath": "source\\k8s-deployment-scripts",
+        "logs": {
+            "tail": 50,
+            "follow": true
+        }
+    }
+}

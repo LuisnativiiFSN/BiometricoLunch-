@@ -1,0 +1,97 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: comedor-api
+  namespace: app-comedor-fsn
+  labels:
+    app.kubernetes.io/name: comedor-api
+    app.kubernetes.io/part-of: app-comedor-fsn
+spec:
+  # Las autorizaciones temporales viven en SQL Server y admiten consumo
+  # atomico desde varias replicas.
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: comedor-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: comedor-api
+        app.kubernetes.io/part-of: app-comedor-fsn
+    spec:
+      os:
+        name: linux
+      nodeSelector:
+        kubernetes.io/os: linux
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: 10.0.40.10:5000/app-comedor-fsn-api:1.0.1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            # Configuracion publica propia del entorno Kubernetes.
+            - name: WEB_ORIGIN
+              value: http://app-comedor-fsn.fasani.local
+            # El Ingress actual publica por HTTP. Con true, el navegador
+            # descarta la cookie JWT porque las cookies Secure exigen HTTPS.
+            - name: COOKIE_SECURE
+              value: "false"
+          # Conserva exactamente los nombres usados en apps/api/.env.
+          envFrom:
+            - secretRef:
+                name: comedor-api-secrets
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+            timeoutSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      terminationGracePeriodSeconds: 30

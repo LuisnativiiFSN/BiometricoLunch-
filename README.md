@@ -64,6 +64,26 @@ Servicios locales:
 - API: http://localhost:3000/api
 - Salud y conexion a SQL Server: http://localhost:3000/api/health
 
+### Docker local
+
+Docker local se administra exclusivamente mediante el script de PowerShell. El
+script lee `DB_PASSWORD` desde `apps/api/.env`, conserva literalmente los
+caracteres especiales y no imprime la contraseña:
+
+```powershell
+.\scripts\docker-local.ps1 build
+.\scripts\docker-local.ps1 up
+.\scripts\docker-local.ps1 status
+.\scripts\docker-local.ps1 logs
+.\scripts\docker-local.ps1 restart
+.\scripts\docker-local.ps1 down
+```
+
+El portal queda disponible en `http://localhost:8083` y reenvía internamente
+`/api` al contenedor NestJS. La API también queda accesible directamente en
+`http://localhost:3000/api`. En Docker local la cookie usa HTTP de forma
+explícita (`COOKIE_SECURE=false`); esto no debe reutilizarse en producción.
+
 ## Empleados
 
 Rutas disponibles:
@@ -96,8 +116,8 @@ No existe una ruta `DELETE`; los empleados se desactivan enviando
 `{ "active": false }` mediante `PATCH` para conservar su historial.
 
 La interfaz React incluye listado, busqueda, creacion, edicion y cambio de estado.
-Consume exclusivamente la URL de NestJS configurada con `VITE_API_URL`; si no se
-define, utiliza `http://localhost:3000/api`.
+Consume la URL de NestJS configurada con `VITE_API_URL`; si no se define, utiliza
+la ruta relativa `/api`.
 
 ## Simulador de huella
 
@@ -179,20 +199,14 @@ activa por empleado y posición, sin eliminar registros históricos.
 
 ## Identificación biométrica 1:N
 
-`POST /api/biometrics/identify` recibe un FMD candidato `ANSI_378_2004`. NestJS carga
-solo los enrolamientos activos, los descifra temporalmente y ejecuta el comparador C#
-interno que usa el SDK DigitalPersona. La aplicación WinUI nunca descarga la galería.
+La identificación 1:N y el SDK DigitalPersona existen exclusivamente en la
+aplicación Windows. La API no incorpora .NET, DPUruNet, ejecutables Windows ni un
+matcher biométrico, y no publica `POST /api/biometrics/identify`.
 
-El umbral predeterminado es 21474, equivalente a `0x7fffffff / 100000` y tomado del
-ejemplo oficial del SDK. Puede configurarse únicamente en la API con
-`BIOMETRIC_MATCH_THRESHOLD`. `BIOMETRIC_MATCHER_PATH` permite indicar la ubicación del
-ejecutable en un despliegue; durante desarrollo se resuelve automáticamente desde el
-proyecto C# compilado en Release x64.
-
-La ruta devuelve `IDENTIFIED`, `NOT_IDENTIFIED` o `AMBIGUOUS`. Solo `IDENTIFIED` incluye
-código y nombre del empleado, nunca plantillas ni puntajes. Después, WinUI envía ese
-`employeeCode` a `/api/kiosk/request-meal`; SQL Server conserva la autoridad sobre
-reservas, estado activo y duplicidad.
+La aplicación Windows descarga la galería cifrada mediante
+`GET /api/biometrics/gallery`, realiza el matching local y, cuando identifica una
+huella, envía `employeeCode` y `enrollmentId` a `/api/kiosk/request-meal`. SQL
+Server conserva la autoridad sobre reservas, estado activo y duplicidad.
 
 El kiosco usa estados separados para conexión, captura, identificación, validación de
 comida y resultados. Además de `APPROVED`, `DUPLICATE`, `NO_MEAL_RESERVED` y
