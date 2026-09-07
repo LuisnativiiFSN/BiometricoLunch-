@@ -1,6 +1,6 @@
 {
   "name": "comedor-biometrico",
-  "version": "0.1.0",
+  "version": "1.0.2",
   "private": true,
   "description": "Monorepo del sistema de gestion de comedor",
   "packageManager": "pnpm@11.19.0",
