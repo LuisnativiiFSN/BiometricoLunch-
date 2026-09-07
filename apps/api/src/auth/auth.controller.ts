@@ -10,6 +10,14 @@ import { LoginDto } from './dto/login.dto.js';
 
 type AuthenticatedRequest = Request & { user: AuthenticatedUser };
 
+function useSecureCookie() {
+  if (process.env.COOKIE_SECURE !== undefined) {
+    return process.env.COOKIE_SECURE === 'true';
+  }
+
+  return process.env.NODE_ENV === 'production';
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -25,7 +33,7 @@ export class AuthController {
     response.cookie(AUTH_COOKIE_NAME, token, {
       httpOnly: true,
       sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
+      secure: useSecureCookie(),
       path: '/api',
     });
 
@@ -44,7 +52,7 @@ export class AuthController {
     response.clearCookie(AUTH_COOKIE_NAME, {
       httpOnly: true,
       sameSite: 'strict',
-      secure: process.env.NODE_ENV === 'production',
+      secure: useSecureCookie(),
       path: '/api',
     });
   }

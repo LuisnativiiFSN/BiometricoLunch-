@@ -1,8 +1,17 @@
-import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 
 export class RequestMealDto {
   @IsString()
-  @IsNotEmpty()
+  @IsOptional()
   @MaxLength(50)
-  employeeId!: string;
+  employeeCode?: string;
+
+  @IsString()
+  @IsOptional()
+  @MaxLength(50)
+  employeeId?: string;
+
+  @IsUUID('4')
+  @IsOptional()
+  enrollmentId?: string;
 }

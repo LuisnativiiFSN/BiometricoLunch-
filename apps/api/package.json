@@ -10,9 +10,8 @@
     "prisma:generate": "prisma generate",
     "prisma:seed": "prisma db seed",
     "prisma:validate": "prisma validate",
-    "test:integration": "pnpm build && node --test --test-concurrency=1 test/meals.integration.test.mjs test/auth.integration.test.mjs",
+    "test:integration": "pnpm build && node --test --test-concurrency=1 test/application-composition.test.mjs test/meals.integration.test.mjs test/auth.integration.test.mjs",
     "test:biometrics": "pnpm build && node --test --test-concurrency=1 test/biometrics.integration.test.mjs",
-    "verify:matcher": "pnpm build && node test/verify-stored-enrollments.mjs",
     "phase4:data": "pnpm build && node test/phase4-acceptance-data.mjs"
   },
   "dependencies": {
