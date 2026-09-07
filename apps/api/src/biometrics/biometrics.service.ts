@@ -228,7 +228,7 @@ export class BiometricsService {
 
   async prepareGallery(
     ifNoneMatch: string | undefined,
-    kioskDeviceId: string,
+    kioskDeviceId?: string,
   ): Promise<BiometricGalleryPreparation> {
     const enrollments = await this.prisma.fingerprint.findMany({
       where: {
@@ -488,12 +488,14 @@ export class BiometricsService {
   }
 
   private async auditGallerySynchronization(
-    kioskDeviceId: string,
+    kioskDeviceId: string | undefined,
     version: string,
     enrollmentCount: number,
     result: 'DOWNLOADED' | 'NOT_MODIFIED' | 'FAILED',
     expiresAt: Date,
   ) {
+    if (!kioskDeviceId) return;
+
     await this.prisma.auditLog.create({
       data: {
         entityName: 'kiosk_devices',

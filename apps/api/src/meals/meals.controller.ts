@@ -4,16 +4,12 @@ import {
   Controller,
   Get,
   Post,
-  UseGuards,
 } from '@nestjs/common';
 import { RequestMealDto } from './dto/request-meal.dto.js';
 import { MealsService } from './meals.service.js';
 import { Public } from '../auth/auth.decorators.js';
-import { KioskDeviceGuard } from '../kiosk-devices/kiosk-device.guard.js';
-import { RequireKioskAuthentication } from '../kiosk-devices/kiosk-device.decorators.js';
 
 @Public()
-@UseGuards(KioskDeviceGuard)
 @Controller('kiosk')
 export class MealsController {
   constructor(private readonly mealsService: MealsService) {}
@@ -24,7 +20,6 @@ export class MealsController {
   }
 
   @Post('request-meal')
-  @RequireKioskAuthentication()
   requestMeal(@Body() requestMealDto: RequestMealDto) {
     const employeeCode =
       requestMealDto.employeeCode ?? requestMealDto.employeeId ?? '';
