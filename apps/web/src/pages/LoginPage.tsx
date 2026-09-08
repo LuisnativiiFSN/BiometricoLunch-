@@ -34,11 +34,11 @@ export function LoginPage({ onAuthenticated, onOpenConsultation }: LoginPageProp
         <section className="login-intro">
           <span className="section-kicker">Acceso protegido</span>
           <h1>Control del comedor, según tu función.</h1>
-          <p>Administración, Recursos Humanos y Cocina cuentan con espacios y permisos independientes.</p>
+          <p>Administración, Recursos Humanos y Proveedor cuentan con espacios y permisos independientes.</p>
           <div className="access-role-list" aria-label="Roles disponibles">
             <span><i /> Administrador</span>
             <span><i /> Recursos Humanos</span>
-            <span><i /> Chef</span>
+            <span><i /> Proveedor</span>
           </div>
         </section>
 

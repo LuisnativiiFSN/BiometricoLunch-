@@ -12,7 +12,7 @@ import {
 
 type AuthenticatedRequest = Request & { user: AuthenticatedUser };
 
-@Roles(UserRole.ADMIN, UserRole.RH, UserRole.CHEF)
+@Roles(UserRole.ADMIN, UserRole.RH, UserRole.PROVEEDOR)
 @Controller('meals')
 export class MealsHistoryController {
   constructor(private readonly mealsService: MealsService) {}

@@ -20,11 +20,11 @@ import type { AuthUser } from './types/auth';
 const pagesByRole: Record<AuthUser['role'], AppPage[]> = {
   ADMIN: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'employees', 'meal-audit', 'deliveries', 'pending', 'transfers', 'users', 'consultation'],
   RH: ['home', 'daily-results', 'weekly-menu', 'weekly-order', 'meal-adjustments', 'employees', 'meal-audit', 'deliveries', 'pending', 'transfers', 'consultation'],
-  CHEF: ['home', 'daily-results', 'deliveries', 'pending'],
+  PROVEEDOR: ['home', 'daily-results', 'deliveries', 'pending'],
 };
 
 function getLandingPage(user: AuthUser | null): AppPage {
-  return user?.role === 'CHEF' ? 'home' : 'weekly-order';
+  return user?.role === 'PROVEEDOR' ? 'home' : 'weekly-order';
 }
 
 function App() {

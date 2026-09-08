@@ -18,7 +18,7 @@
             "name": "api",
             "namespace": "app-comedor-fsn",
             "path": "..\\api\\k8s",
-            "dockerImage": "10.0.40.10:5000/app-comedor-fsn-api:1.0.2",
+            "dockerImage": "10.0.40.10:5000/app-comedor-fsn-api:1.0.3",
             "port": 3000,
             "healthCheck": "/api/health",
             "swagger": ""
@@ -27,7 +27,7 @@
             "name": "web",
             "namespace": "app-comedor-fsn",
             "path": "..\\web\\k8s",
-            "dockerImage": "10.0.40.10:5000/app-comedor-fsn-web:1.0.2",
+            "dockerImage": "10.0.40.10:5000/app-comedor-fsn-web:1.0.3",
             "port": 8080,
             "healthCheck": "",
             "swagger": ""

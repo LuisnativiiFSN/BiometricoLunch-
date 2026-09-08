@@ -8,7 +8,7 @@ import cookieParser from 'cookie-parser';
 import { AppModule } from '../dist/app.module.js';
 import { PrismaService } from '../dist/prisma/prisma.service.js';
 
-const TEST_USERS = ['auto-role-admin', 'auto-role-rh', 'auto-role-chef'];
+const TEST_USERS = ['auto-role-admin', 'auto-role-rh', 'auto-role-proveedor'];
 const MANAGED_USER = 'auto-managed-rh';
 const TEST_PASSWORD = 'AutomaticTest!2026';
 const MANAGED_PASSWORD = 'ManagedInitial!2026';
@@ -116,7 +116,7 @@ before(async () => {
     data: [
       { username: TEST_USERS[0], passwordHash, role: 'ADMIN' },
       { username: TEST_USERS[1], passwordHash, role: 'RH' },
-      { username: TEST_USERS[2], passwordHash, role: 'CHEF' },
+      { username: TEST_USERS[2], passwordHash, role: 'PROVEEDOR' },
     ],
   });
 
@@ -370,8 +370,8 @@ describe('autenticación y permisos por rol', () => {
     assert.equal(deviceAudits.length - synchronizationAudits.length, 3);
   });
 
-  test('aplica las páginas y acciones permitidas para Admin, RH y Chef', async () => {
-    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+  test('aplica las páginas y acciones permitidas para Admin, RH y Proveedor', async () => {
+    const [adminCookie, rhCookie, providerCookie] = await Promise.all([
       login(TEST_USERS[0]),
       login(TEST_USERS[1]),
       login(TEST_USERS[2]),
@@ -394,15 +394,15 @@ describe('autenticación y permisos por rol', () => {
       ).status,
       403,
     );
-    assert.equal((await api('/employees', chefCookie)).status, 403);
-    assert.equal((await api('/employees/departments', chefCookie)).status, 403);
-    assert.equal((await api('/employees/CUALQUIERA', chefCookie)).status, 403);
+    assert.equal((await api('/employees', providerCookie)).status, 403);
+    assert.equal((await api('/employees/departments', providerCookie)).status, 403);
+    assert.equal((await api('/employees/CUALQUIERA', providerCookie)).status, 403);
     assert.equal(
       (
-        await api('/employees', chefCookie, {
+        await api('/employees', providerCookie, {
           method: 'POST',
           body: JSON.stringify({
-            employeeCode: 'CHEF-NO-AUTORIZADO',
+            employeeCode: 'PROVEEDOR-NO-AUTORIZADO',
             name: 'Sin acceso',
           }),
         })
@@ -411,18 +411,18 @@ describe('autenticación y permisos por rol', () => {
     );
     assert.equal(
       (
-        await api('/meals/pending-today?employeeCode=18358', chefCookie)
+        await api('/meals/pending-today?employeeCode=18358', providerCookie)
       ).status,
       200,
     );
     assert.equal(
-      (await api('/meals/pending-today/export', chefCookie)).status,
+      (await api('/meals/pending-today/export', providerCookie)).status,
       403,
     );
-    assert.equal((await api('/users', chefCookie)).status, 403);
+    assert.equal((await api('/users', providerCookie)).status, 403);
     assert.equal((await api('/meal-planning/adjustments', rhCookie)).status, 200);
     assert.equal((await api('/meal-planning/adjustments', adminCookie)).status, 403);
-    assert.equal((await api('/meal-planning/adjustments', chefCookie)).status, 403);
+    assert.equal((await api('/meal-planning/adjustments', providerCookie)).status, 403);
     assert.equal(
       (
         await api(
@@ -468,7 +468,7 @@ describe('autenticación y permisos por rol', () => {
   });
 
   test('solo el administrador agrega el almuerzo disponible de hoy', async () => {
-    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+    const [adminCookie, rhCookie, providerCookie] = await Promise.all([
       login(TEST_USERS[0]),
       login(TEST_USERS[1]),
       login(TEST_USERS[2]),
@@ -486,7 +486,7 @@ describe('autenticación y permisos por rol', () => {
     );
     assert.equal(
       (
-        await api('/meals/available-today', chefCookie, {
+        await api('/meals/available-today', providerCookie, {
           method: 'POST',
           body,
         })
@@ -519,7 +519,7 @@ describe('autenticación y permisos por rol', () => {
   });
 
   test('la transferencia es exclusiva de Administrador y Recursos Humanos', async () => {
-    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+    const [adminCookie, rhCookie, providerCookie] = await Promise.all([
       login(TEST_USERS[0]),
       login(TEST_USERS[1]),
       login(TEST_USERS[2]),
@@ -535,7 +535,7 @@ describe('autenticación y permisos por rol', () => {
       404,
     );
     assert.equal(
-      (await api('/transfers', chefCookie, { method: 'POST', body })).status,
+      (await api('/transfers', providerCookie, { method: 'POST', body })).status,
       403,
     );
     assert.equal(
@@ -549,13 +549,13 @@ describe('autenticación y permisos por rol', () => {
       404,
     );
     assert.equal(
-      (await api('/transfers/pending/D1-NO-EXISTE', chefCookie)).status,
+      (await api('/transfers/pending/D1-NO-EXISTE', providerCookie)).status,
       403,
     );
   });
 
   test('la exportación individual es privada para Administrador y Recursos Humanos', async () => {
-    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+    const [adminCookie, rhCookie, providerCookie] = await Promise.all([
       login(TEST_USERS[0]),
       login(TEST_USERS[1]),
       login(TEST_USERS[2]),
@@ -564,13 +564,13 @@ describe('autenticación y permisos por rol', () => {
       '/meal-audits/employees/NO-EXISTE/export?startDate=2026-02-10&endDate=2026-08-28';
 
     assert.equal((await api(path)).status, 401);
-    assert.equal((await api(path, chefCookie)).status, 403);
+    assert.equal((await api(path, providerCookie)).status, 403);
     assert.equal((await api(path, adminCookie)).status, 404);
     assert.equal((await api(path, rhCookie)).status, 404);
   });
 
   test('el reporte de nómina es privado para Administrador y Recursos Humanos', async () => {
-    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+    const [adminCookie, rhCookie, providerCookie] = await Promise.all([
       login(TEST_USERS[0]),
       login(TEST_USERS[1]),
       login(TEST_USERS[2]),
@@ -579,13 +579,13 @@ describe('autenticación y permisos por rol', () => {
       '/meal-audits/payroll/export?startDate=2099-02-01&endDate=2099-02-05';
 
     assert.equal((await api(path)).status, 401);
-    assert.equal((await api(path, chefCookie)).status, 403);
+    assert.equal((await api(path, providerCookie)).status, 403);
     assert.equal((await api(path, adminCookie)).status, 200);
     assert.equal((await api(path, rhCookie)).status, 200);
   });
 
   test('los pedidos diarios y semanales solo se exportan por Administrador y RH', async () => {
-    const [adminCookie, rhCookie, chefCookie] = await Promise.all([
+    const [adminCookie, rhCookie, providerCookie] = await Promise.all([
       login(TEST_USERS[0]),
       login(TEST_USERS[1]),
       login(TEST_USERS[2]),
@@ -595,8 +595,8 @@ describe('autenticación y permisos por rol', () => {
     const dailyPath = `/meal-audits/orders/days/${addDays(currentMonday, 1)}/export`;
 
     assert.equal((await api(weeklyPath)).status, 401);
-    assert.equal((await api(weeklyPath, chefCookie)).status, 403);
-    assert.equal((await api(dailyPath, chefCookie)).status, 403);
+    assert.equal((await api(weeklyPath, providerCookie)).status, 403);
+    assert.equal((await api(dailyPath, providerCookie)).status, 403);
     assert.equal((await api(weeklyPath, adminCookie)).status, 200);
     assert.equal((await api(dailyPath, rhCookie)).status, 200);
   });
