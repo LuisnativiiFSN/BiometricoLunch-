@@ -30,7 +30,7 @@ export class EmployeesService {
     );
   }
 
-  findAll(search?: string, active?: boolean) {
+  async findAll(search?: string, active?: boolean) {
     const normalizedSearch = search?.trim();
     const where: Prisma.EmployeeWhereInput = {
       ...(active === undefined ? {} : { active }),
@@ -62,22 +62,45 @@ export class EmployeesService {
         : {}),
     };
 
-    return this.prisma.employee.findMany({
+    const employees = await this.prisma.employee.findMany({
       where,
       orderBy: [{ active: 'desc' }, { name: 'asc' }],
+      include: {
+        fingerprints: {
+          where: { active: true },
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
+
+    return employees.map(({ fingerprints, ...employee }) => ({
+      ...employee,
+      isEnrolled: fingerprints.length > 0,
+    }));
   }
 
   async findOne(employeeCode: string) {
     const employee = await this.prisma.employee.findUnique({
       where: { employeeCode },
+      include: {
+        fingerprints: {
+          where: { active: true },
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
 
     if (!employee) {
       throw new NotFoundException('Empleado no encontrado');
     }
 
-    return employee;
+    const { fingerprints, ...employeeData } = employee;
+    return {
+      ...employeeData,
+      isEnrolled: fingerprints.length > 0,
+    };
   }
 
   async create(createEmployeeDto: CreateEmployeeDto) {
@@ -85,7 +108,7 @@ export class EmployeesService {
       createEmployeeDto.department,
     );
     try {
-      return await this.prisma.employee.create({
+      const employee = await this.prisma.employee.create({
         data: {
           employeeCode: createEmployeeDto.employeeCode,
           name: createEmployeeDto.name,
@@ -96,6 +119,7 @@ export class EmployeesService {
             : { active: createEmployeeDto.active }),
         },
       });
+      return this.findOne(employee.employeeCode);
     } catch (error) {
       this.handleUniqueEmployeeCode(error);
     }
@@ -132,10 +156,11 @@ export class EmployeesService {
     await this.findOne(employeeCode);
 
     try {
-      return await this.prisma.employee.update({
+      const employee = await this.prisma.employee.update({
         where: { employeeCode },
         data,
       });
+      return this.findOne(employee.employeeCode);
     } catch (error) {
       this.handleUniqueEmployeeCode(error);
     }

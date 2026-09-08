@@ -4,6 +4,7 @@ export interface Employee {
   email: string;
   department: string;
   active: boolean;
+  isEnrolled: boolean;
   createdAt: string;
   updatedAt: string;
 }

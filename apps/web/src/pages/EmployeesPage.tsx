@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { EmployeeFormModal } from '../components/EmployeeFormModal';
 import { EmployeeTable } from '../components/EmployeeTable';
 import {
@@ -19,6 +19,19 @@ export function EmployeesPage() {
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [updatingId, setUpdatingId] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [enrollmentFilter, setEnrollmentFilter] = useState<'all' | 'pending' | 'enrolled'>('all');
+
+  const filteredEmployees = useMemo(() => {
+    if (enrollmentFilter === 'pending') {
+      return employees.filter((employee) => !employee.isEnrolled);
+    }
+    if (enrollmentFilter === 'enrolled') {
+      return employees.filter((employee) => employee.isEnrolled);
+    }
+    return employees;
+  }, [employees, enrollmentFilter]);
+
+  const pendingEnrollmentCount = employees.filter((employee) => !employee.isEnrolled).length;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -128,11 +141,24 @@ export function EmployeesPage() {
             <span className="result-count">
               {isLoading
                 ? 'Consultando registros…'
-                : `${employees.length} ${employees.length === 1 ? 'empleado' : 'empleados'}`}
+                : `${filteredEmployees.length} ${filteredEmployees.length === 1 ? 'empleado' : 'empleados'} · ${pendingEnrollmentCount} pendientes de enrolamiento`}
             </span>
           </div>
 
-          <label className="search-box">
+          <div className="employees-toolbar-controls">
+            <label className="enrollment-filter">
+              <span>Enrolamiento</span>
+              <select
+                value={enrollmentFilter}
+                onChange={(event) => setEnrollmentFilter(event.target.value as typeof enrollmentFilter)}
+              >
+                <option value="all">Todos</option>
+                <option value="pending">Pendientes ({pendingEnrollmentCount})</option>
+                <option value="enrolled">Enrolados</option>
+              </select>
+            </label>
+
+            <label className="search-box">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <circle cx="11" cy="11" r="6.5" />
               <path d="m16 16 4 4" />
@@ -153,7 +179,8 @@ export function EmployeesPage() {
                 ×
               </button>
             )}
-          </label>
+            </label>
+          </div>
         </div>
 
         {error && (
@@ -166,7 +193,7 @@ export function EmployeesPage() {
         )}
 
         <EmployeeTable
-          employees={employees}
+          employees={filteredEmployees}
           isLoading={isLoading}
           updatingId={updatingId}
           onEdit={openEditForm}

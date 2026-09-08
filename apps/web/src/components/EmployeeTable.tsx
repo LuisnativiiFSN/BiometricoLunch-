@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import type { Employee } from '../types/employee';
 import { StatusBadge } from './StatusBadge';
 
@@ -9,6 +10,9 @@ interface EmployeeTableProps {
   onToggleActive: (employee: Employee) => void;
 }
 
+type SortKey = 'employeeCode' | 'name' | 'email' | 'department' | 'isEnrolled' | 'active';
+type SortDirection = 'ascending' | 'descending';
+
 export function EmployeeTable({
   employees,
   isLoading,
@@ -16,12 +20,61 @@ export function EmployeeTable({
   onEdit,
   onToggleActive,
 }: EmployeeTableProps) {
+  const [sortKey, setSortKey] = useState<SortKey>('isEnrolled');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('ascending');
+
+  const sortedEmployees = useMemo(() => {
+    const direction = sortDirection === 'ascending' ? 1 : -1;
+    return [...employees].sort((left, right) => {
+      const leftValue = left[sortKey];
+      const rightValue = right[sortKey];
+
+      if (typeof leftValue === 'boolean' && typeof rightValue === 'boolean') {
+        if (leftValue === rightValue) {
+          return left.name.localeCompare(right.name, 'es', { sensitivity: 'base' });
+        }
+        return (Number(leftValue) - Number(rightValue)) * direction;
+      }
+
+      const comparison = String(leftValue).localeCompare(String(rightValue), 'es', {
+        numeric: sortKey === 'employeeCode',
+        sensitivity: 'base',
+      });
+      return comparison === 0
+        ? left.name.localeCompare(right.name, 'es', { sensitivity: 'base' })
+        : comparison * direction;
+    });
+  }, [employees, sortDirection, sortKey]);
+
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDirection((current) => current === 'ascending' ? 'descending' : 'ascending');
+      return;
+    }
+    setSortKey(key);
+    setSortDirection('ascending');
+  };
+
+  const sortableHeader = (key: SortKey, label: string) => {
+    const isCurrent = sortKey === key;
+    return (
+      <th aria-sort={isCurrent ? sortDirection : 'none'}>
+        <button className="table-sort-button" type="button" onClick={() => handleSort(key)}>
+          <span>{label}</span>
+          <span className="sort-indicator" aria-hidden="true">
+            {isCurrent ? (sortDirection === 'ascending' ? '↑' : '↓') : '↕'}
+          </span>
+        </button>
+      </th>
+    );
+  };
+
   if (isLoading) {
     return (
       <div className="table-loading" aria-label="Cargando empleados">
         {Array.from({ length: 5 }).map((_, index) => (
           <div className="skeleton-row" key={index}>
-            {Array.from({ length: 6 }).map((__, cellIndex) => (
+            {Array.from({ length: 7 }).map((__, cellIndex) => (
               <span key={cellIndex} />
             ))}
           </div>
@@ -50,16 +103,17 @@ export function EmployeeTable({
       <table className="employees-table">
         <thead>
           <tr>
-            <th>Código</th>
-            <th>Empleado</th>
-            <th>Correo</th>
-            <th>Departamento</th>
-            <th>Estado</th>
+            {sortableHeader('employeeCode', 'Código')}
+            {sortableHeader('name', 'Empleado')}
+            {sortableHeader('email', 'Correo')}
+            {sortableHeader('department', 'Departamento')}
+            {sortableHeader('isEnrolled', 'Enrolamiento')}
+            {sortableHeader('active', 'Estado')}
             <th className="actions-column">Acciones</th>
           </tr>
         </thead>
         <tbody>
-          {employees.map((employee) => {
+          {sortedEmployees.map((employee) => {
             const isUpdating = updatingId === employee.employeeCode;
 
             return (
@@ -81,6 +135,12 @@ export function EmployeeTable({
                   {employee.email}
                 </td>
                 <td>{employee.department}</td>
+                <td>
+                  <span className={`enrollment-badge ${employee.isEnrolled ? 'is-enrolled' : 'is-pending'}`}>
+                    <span aria-hidden="true" />
+                    {employee.isEnrolled ? 'Enrolado' : 'Pendiente'}
+                  </span>
+                </td>
                 <td>
                   <StatusBadge active={employee.active} />
                 </td>
