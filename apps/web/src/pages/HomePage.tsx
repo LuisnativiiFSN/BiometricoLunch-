@@ -94,17 +94,17 @@ export function HomePage() {
       <section className="weekly-results-card" aria-labelledby="weekly-results-title">
         <div className="weekly-results-heading"><div><span className="card-eyebrow">Desglose para el proveedor</span><h2 id="weekly-results-title">Cantidad solicitada por comida</h2></div><span className="live-indicator"><i /> Datos actuales</span></div>
         {isLoadingWeek ? <div className="weekly-loading"><span className="button-spinner" /> Calculando totales…</div> : (
-          <div className="chef-results-grid">
+          <div className="provider-results-grid">
             {weeklySummary?.days.map((day) => {
               const maxTotal = Math.max(1, ...day.meals.map((meal) => meal.total));
               return (
-                <article className="chef-day-result" key={day.date}>
+                <article className="provider-day-result" key={day.date}>
                   <header><div><span>{day.dayName}</span><small>{formatDate(day.date)}</small></div><strong>{day.total}<small> pedidos</small></strong></header>
-                  <div className="chef-meal-bars">
-                    {day.meals.length === 0 ? <p className="chef-empty-day">No hay menú configurado.</p> : day.meals.map((meal) => (
-                      <div className="chef-meal-bar" key={meal.mealId}>
+                  <div className="provider-meal-bars">
+                    {day.meals.length === 0 ? <p className="provider-empty-day">No hay menú configurado.</p> : day.meals.map((meal) => (
+                      <div className="provider-meal-bar" key={meal.mealId}>
                         <div><span>{meal.name}</span><strong>{meal.total}</strong></div>
-                        <div className="chef-bar-track"><i style={{ '--chef-bar-width': `${Math.round((meal.total / maxTotal) * 100)}%` } as CSSProperties} /></div>
+                        <div className="provider-bar-track"><i style={{ '--provider-bar-width': `${Math.round((meal.total / maxTotal) * 100)}%` } as CSSProperties} /></div>
                       </div>
                     ))}
                   </div>

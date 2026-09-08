@@ -104,7 +104,7 @@ function NavigationIcon({ page }: { page: AppPage }) {
 const roleNames: Record<UserRole, string> = {
   ADMIN: 'Administrador',
   RH: 'Recursos Humanos',
-  CHEF: 'Chef',
+  PROVEEDOR: 'Proveedor',
 };
 
 export function AppShell({ activePage, children, user, onNavigate, onLogout }: AppShellProps) {

@@ -891,9 +891,9 @@ describe('reservaciones semanales desde el portal', () => {
         mealType: MealType.LUNCH,
       },
     });
-    const first = await createEmployee('CHEF-TOTAL-1');
-    const second = await createEmployee('CHEF-TOTAL-2');
-    const third = await createEmployee('CHEF-TOTAL-3');
+    const first = await createEmployee('PROVEEDOR-TOTAL-1');
+    const second = await createEmployee('PROVEEDOR-TOTAL-2');
+    const third = await createEmployee('PROVEEDOR-TOTAL-3');
     const mondayBeforeCutoff = new Date(futureMonday);
     mondayBeforeCutoff.setUTCHours(13, 0, 0, 0);
 
@@ -1474,12 +1474,12 @@ describe('consulta pública de almuerzos', () => {
 
   test('exporta pedidos semanales agrupados por empleado y totales por plato y día', async () => {
     const employee = await createEmployee(
-      'CHEF-REPORT-A',
+      'PROVEEDOR-REPORT-A',
       true,
       'A-INFORMATICA',
     );
     const secondEmployee = await createEmployee(
-      'CHEF-REPORT-B',
+      'PROVEEDOR-REPORT-B',
       true,
       'Z-VENTAS',
     );

@@ -30,7 +30,7 @@ export class WeeklyMealsController {
   }
 
   @Get('weeks/:weekStart/summary')
-  @Roles(UserRole.ADMIN, UserRole.RH, UserRole.CHEF)
+  @Roles(UserRole.ADMIN, UserRole.RH, UserRole.PROVEEDOR)
   getWeeklySummary(@Param('weekStart') weekStart: string) {
     return this.mealsService.getWeeklyOrderSummary(weekStart);
   }

@@ -23,6 +23,6 @@ export class CreateUserDto {
   @MaxLength(72)
   password!: string;
 
-  @IsIn([UserRole.RH, UserRole.CHEF])
-  role!: 'RH' | 'CHEF';
+  @IsIn([UserRole.RH, UserRole.PROVEEDOR])
+  role!: 'RH' | 'PROVEEDOR';
 }
