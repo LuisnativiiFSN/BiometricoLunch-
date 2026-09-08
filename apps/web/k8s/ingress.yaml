@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: comedor-web
+  namespace: app-comedor-fsn
+  labels:
+    app.kubernetes.io/name: comedor-web
+    app.kubernetes.io/part-of: app-comedor-fsn
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  ingressClassName: f5-nginx
+  rules:
+    - host: app-comedor-fsn.fasani.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: comedor-web
+                port:
+                  number: 80

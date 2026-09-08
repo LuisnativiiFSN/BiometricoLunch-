@@ -64,6 +64,26 @@ Servicios locales:
 - API: http://localhost:3000/api
 - Salud y conexion a SQL Server: http://localhost:3000/api/health
 
+### Docker local
+
+Docker local se administra exclusivamente mediante el script de PowerShell. El
+script lee `DB_PASSWORD` desde `apps/api/.env`, conserva literalmente los
+caracteres especiales y no imprime la contraseña:
+
+```powershell
+.\scripts\docker-local.ps1 build
+.\scripts\docker-local.ps1 up
+.\scripts\docker-local.ps1 status
+.\scripts\docker-local.ps1 logs
+.\scripts\docker-local.ps1 restart
+.\scripts\docker-local.ps1 down
+```
+
+El portal queda disponible en `http://localhost:8083` y reenvía internamente
+`/api` al contenedor NestJS. La API también queda accesible directamente en
+`http://localhost:3000/api`. En Docker local la cookie usa HTTP de forma
+explícita (`COOKIE_SECURE=false`); esto no debe reutilizarse en producción.
+
 ## Empleados
 
 Rutas disponibles:
@@ -96,8 +116,8 @@ No existe una ruta `DELETE`; los empleados se desactivan enviando
 `{ "active": false }` mediante `PATCH` para conservar su historial.
 
 La interfaz React incluye listado, busqueda, creacion, edicion y cambio de estado.
-Consume exclusivamente la URL de NestJS configurada con `VITE_API_URL`; si no se
-define, utiliza `http://localhost:3000/api`.
+Consume la URL de NestJS configurada con `VITE_API_URL`; si no se define, utiliza
+la ruta relativa `/api`.
 
 ## Simulador de huella
 
@@ -179,20 +199,14 @@ activa por empleado y posición, sin eliminar registros históricos.
 
 ## Identificación biométrica 1:N
 
-`POST /api/biometrics/identify` recibe un FMD candidato `ANSI_378_2004`. NestJS carga
-solo los enrolamientos activos, los descifra temporalmente y ejecuta el comparador C#
-interno que usa el SDK DigitalPersona. La aplicación WinUI nunca descarga la galería.
+La identificación 1:N y el SDK DigitalPersona existen exclusivamente en la
+aplicación Windows. La API no incorpora .NET, DPUruNet, ejecutables Windows ni un
+matcher biométrico, y no publica `POST /api/biometrics/identify`.
 
-El umbral predeterminado es 21474, equivalente a `0x7fffffff / 100000` y tomado del
-ejemplo oficial del SDK. Puede configurarse únicamente en la API con
-`BIOMETRIC_MATCH_THRESHOLD`. `BIOMETRIC_MATCHER_PATH` permite indicar la ubicación del
-ejecutable en un despliegue; durante desarrollo se resuelve automáticamente desde el
-proyecto C# compilado en Release x64.
-
-La ruta devuelve `IDENTIFIED`, `NOT_IDENTIFIED` o `AMBIGUOUS`. Solo `IDENTIFIED` incluye
-código y nombre del empleado, nunca plantillas ni puntajes. Después, WinUI envía ese
-`employeeCode` a `/api/kiosk/request-meal`; SQL Server conserva la autoridad sobre
-reservas, estado activo y duplicidad.
+La aplicación Windows descarga la galería cifrada mediante
+`GET /api/biometrics/gallery`, realiza el matching local y, cuando identifica una
+huella, envía `employeeCode` y `enrollmentId` a `/api/kiosk/request-meal`. SQL
+Server conserva la autoridad sobre reservas, estado activo y duplicidad.
 
 El kiosco usa estados separados para conexión, captura, identificación, validación de
 comida y resultados. Además de `APPROVED`, `DUPLICATE`, `NO_MEAL_RESERVED` y
@@ -287,7 +301,7 @@ Permisos del portal:
 - Público: `Encargar comida`, `Iniciar sesión` y `Consulta`.
 - Administrador: resultados, configuración del menú semanal, horarios de cierre, empleados, reportes para el proveedor, auditoría y nómina, transferencias y administración de usuarios. No accede a la modificación excepcional de almuerzos.
 - Recursos Humanos: resultados semanales, resultados de hoy, menú semanal, horarios de cierre, encargar comida, modificación de almuerzo, empleados, reportes para el proveedor, auditoría y nómina, entregas, pendientes, transferencias y consulta.
-- Chef: resultados semanales, resultados de hoy, entregas y pendientes. No tiene acceso a Encargar comida, Consulta, Empleados, Reportes ni a la configuración del menú.
+- Proveedor: resultados semanales, resultados de hoy, entregas y pendientes. No tiene acceso a Encargar comida, Consulta, Empleados, Reportes ni a la configuración del menú.
 
 ## Menú y reservaciones semanales desde el portal
 
@@ -320,7 +334,7 @@ privada de Recursos Humanos.
 
 ### Modificación excepcional por Recursos Humanos
 
-La página `Modificar almuerzo` es exclusiva del rol `RH`; Administrador, Chef y
+La página `Modificar almuerzo` es exclusiva del rol `RH`; Administrador, Proveedor y
 usuarios sin sesión reciben acceso denegado desde la API. Recursos Humanos busca
 el código del empleado y selecciona un día de la semana actual. Puede agregar un
 almuerzo cuando todavía no existe reservación, cambiarlo por otra opción del
@@ -333,7 +347,7 @@ resultado, el motivo, la cuenta RH responsable y la fecha del movimiento. La
 misma pantalla presenta las últimas modificaciones para facilitar su revisión.
 
 La información está dividida en dos pantallas para Administrador, Recursos
-Humanos y Chef. `Resultados semanales` muestra el total de reservaciones de la
+Humanos y Proveedor. `Resultados semanales` muestra el total de reservaciones de la
 semana, el resumen por día, el total de cada plato y barras comparativas para
 preparar el reporte del proveedor. Los días ya no muestran horarios de cierre
 individuales. `Resultados de hoy` contiene únicamente el gráfico
@@ -342,7 +356,7 @@ reclamado su comida.
 
 Después del cierre semanal configurado para el lunes, `Resultados de hoy`
 habilita para Administrador y Recursos Humanos la descarga de los pendientes en
-formato Excel. Chef puede consultar la operación, pero no ve el botón y la API
+formato Excel. Proveedor puede consultar la operación, pero no ve el botón y la API
 rechaza directamente su intento de exportación. El archivo incluye
 departamento, código, nombre y comida solicitada; se ordena por departamento y
 luego por nombre. La API también valida el horario, por lo que la exportación no
@@ -351,7 +365,7 @@ puede forzarse antes del cierre mediante una llamada directa.
 Después de abrir el portal o iniciar sesión, la primera pantalla es `Encargar
 comida`. Las rutas
 de empleados validan la sesión y el rol en la API: únicamente Administrador y
-Recursos Humanos pueden consultarlas o modificarlas; Chef recibe una respuesta
+Recursos Humanos pueden consultarlas o modificarlas; Proveedor recibe una respuesta
 de acceso denegado aunque intente llamar el endpoint directamente.
 
 En `Pendientes` se puede buscar el código exacto de un empleado. La consulta se
@@ -383,13 +397,13 @@ ya tengan una reservación propia o transferida para esa fecha. El endpoint
 `GET /api/transfers/pending/:employeeCode` devuelve las reservaciones que todavía
 pueden transferirse. `POST /api/transfers` realiza el movimiento y
 `GET /api/transfers` devuelve el historial. Los tres endpoints aceptan una
-sesión activa de Administrador o Recursos Humanos y rechazan al rol Chef.
+sesión activa de Administrador o Recursos Humanos y rechazan al rol Proveedor.
 
 ### Reportes para el proveedor, auditoría y nómina
 
 La página privada `Reportes` permite a Administrador y Recursos Humanos elegir
 entre pedidos para el proveedor, auditoría individual y el consolidado general para
-nómina. La opción no aparece para el público ni para Chef y los endpoints
+nómina. La opción no aparece para el público ni para Proveedor y los endpoints
 también rechazan esos accesos directamente.
 
 En `Pedidos para el proveedor` se puede recorrer la semana actual y cualquier semana
@@ -444,7 +458,7 @@ Un almuerzo se considera entregado cuando la reservación tiene una solicitud
 `APPROVED`; de lo contrario aparece pendiente. Los períodos sin movimientos se
 muestran con totales en cero y una tabla vacía.
 
-El administrador puede crear únicamente cuentas `RH` y `CHEF`, cambiar sus
+El administrador puede crear únicamente cuentas `RH` y `PROVEEDOR`, cambiar sus
 contraseñas y activarlas o desactivarlas. Estas operaciones dejan una entrada en
 `audit_logs` sin almacenar contraseñas ni hashes en el detalle del log.
 
@@ -514,4 +528,4 @@ los roles y las políticas operativas de producción continúan pendientes.
 
 
 vamos a hacer una implementacion de logeo, en el cual vamos a tener lo que son diferetenes Usuarios, asi que vamos a generar una tablade usuarios en la cual
-van a existir los sigueintes ( Admin, RH, Chef, y sin logeo)
+van a existir los siguientes (Admin, RH, Proveedor y sin inicio de sesión)

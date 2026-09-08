@@ -143,6 +143,19 @@ async function createReservation(
   });
 }
 
+function createEnrollment(employeeId, active = true) {
+  return prisma.fingerprint.create({
+    data: {
+      employeeId,
+      fingerPosition: 'RIGHT_INDEX',
+      templateData: Buffer.alloc(64, 7),
+      templateFormat: 'ANSI_378_2004',
+      quality: 80,
+      active,
+    },
+  });
+}
+
 before(async () => {
   await prisma.onModuleInit();
   await cleanup();
@@ -161,6 +174,57 @@ after(async () => {
 });
 
 describe('POST /kiosk/request-meal - reglas de entrega', () => {
+  test('acepta employeeCode y un enrolamiento activo relacionado', async () => {
+    const employee = await createEmployee('VALID-ENROLLMENT');
+    const enrollment = await createEnrollment(employee.employeeCode);
+    await createReservation(employee.employeeCode, 'POLLO VALIDADO');
+
+    const result = await mealsService.requestLunch(
+      employee.employeeCode,
+      enrollment.id,
+    );
+
+    assert.equal(result.status, MealRequestStatus.APPROVED);
+  });
+
+  test('rechaza un enrolamiento desactivado', async () => {
+    const employee = await createEmployee('INACTIVE-ENROLLMENT');
+    const enrollment = await createEnrollment(employee.employeeCode, false);
+
+    await assert.rejects(
+      () => mealsService.requestLunch(employee.employeeCode, enrollment.id),
+      (error) => error.getStatus?.() === 403,
+    );
+  });
+
+  test('rechaza un enrolamiento que pertenece a otro empleado', async () => {
+    const owner = await createEmployee('ENROLLMENT-OWNER');
+    const claimed = await createEmployee('ENROLLMENT-CLAIMED');
+    const enrollment = await createEnrollment(owner.employeeCode);
+
+    await assert.rejects(
+      () => mealsService.requestLunch(claimed.employeeCode, enrollment.id),
+      (error) => error.getStatus?.() === 403,
+    );
+  });
+
+  test('el contrato anterior depende de la bandera de compatibilidad', async () => {
+    const previous = process.env.KIOSK_MEAL_LEGACY_COMPATIBILITY;
+    process.env.KIOSK_MEAL_LEGACY_COMPATIBILITY = 'false';
+    try {
+      await assert.rejects(
+        () => mealsService.requestLunch('EMPLOYEE-WITHOUT-ENROLLMENT'),
+        (error) => error.getStatus?.() === 400,
+      );
+    } finally {
+      if (previous === undefined) {
+        delete process.env.KIOSK_MEAL_LEGACY_COMPATIBILITY;
+      } else {
+        process.env.KIOSK_MEAL_LEGACY_COMPATIBILITY = previous;
+      }
+    }
+  });
+
   test('aprueba y guarda la entrega cuando existe reserva', async () => {
     const employee = await createEmployee('APPROVED');
     const reservation = await createReservation(employee.employeeCode);
@@ -827,9 +891,9 @@ describe('reservaciones semanales desde el portal', () => {
         mealType: MealType.LUNCH,
       },
     });
-    const first = await createEmployee('CHEF-TOTAL-1');
-    const second = await createEmployee('CHEF-TOTAL-2');
-    const third = await createEmployee('CHEF-TOTAL-3');
+    const first = await createEmployee('PROVEEDOR-TOTAL-1');
+    const second = await createEmployee('PROVEEDOR-TOTAL-2');
+    const third = await createEmployee('PROVEEDOR-TOTAL-3');
     const mondayBeforeCutoff = new Date(futureMonday);
     mondayBeforeCutoff.setUTCHours(13, 0, 0, 0);
 
@@ -965,8 +1029,22 @@ describe('transferencias de almuerzo', () => {
     if (futureBelongsToCurrentMonth) {
       assert.equal(sourceSummary.items[0].id, futureReservation.id);
     }
-    assert.equal(beneficiarySummary.summary.totalLunches, 1);
-    assert.equal(beneficiarySummary.summary.delivered, 1);
+    const currentWeekMonday = new Date(getToday());
+    currentWeekMonday.setUTCDate(
+      currentWeekMonday.getUTCDate() -
+        ((currentWeekMonday.getUTCDay() + 6) % 7),
+    );
+    const currentWeekBelongsToCurrentMonth =
+      currentWeekMonday.toISOString().slice(0, 7) ===
+      getToday().toISOString().slice(0, 7);
+    assert.equal(
+      beneficiarySummary.summary.totalLunches,
+      currentWeekBelongsToCurrentMonth ? 1 : 0,
+    );
+    assert.equal(
+      beneficiarySummary.summary.delivered,
+      currentWeekBelongsToCurrentMonth ? 1 : 0,
+    );
     assert.equal(auditLog.actorUserId, actor.id);
     assert.match(auditLog.newValues ?? '', new RegExp(beneficiary.employeeCode));
     assert.ok(
@@ -1396,12 +1474,12 @@ describe('consulta pública de almuerzos', () => {
 
   test('exporta pedidos semanales agrupados por empleado y totales por plato y día', async () => {
     const employee = await createEmployee(
-      'CHEF-REPORT-A',
+      'PROVEEDOR-REPORT-A',
       true,
       'A-INFORMATICA',
     );
     const secondEmployee = await createEmployee(
-      'CHEF-REPORT-B',
+      'PROVEEDOR-REPORT-B',
       true,
       'Z-VENTAS',
     );

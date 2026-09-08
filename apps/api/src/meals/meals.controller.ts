@@ -1,4 +1,10 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+} from '@nestjs/common';
 import { RequestMealDto } from './dto/request-meal.dto.js';
 import { MealsService } from './meals.service.js';
 import { Public } from '../auth/auth.decorators.js';
@@ -15,6 +21,20 @@ export class MealsController {
 
   @Post('request-meal')
   requestMeal(@Body() requestMealDto: RequestMealDto) {
-    return this.mealsService.requestLunch(requestMealDto.employeeId);
+    const employeeCode =
+      requestMealDto.employeeCode ?? requestMealDto.employeeId ?? '';
+    if (
+      requestMealDto.employeeCode &&
+      requestMealDto.employeeId &&
+      requestMealDto.employeeCode !== requestMealDto.employeeId
+    ) {
+      throw new BadRequestException(
+        'employeeCode y employeeId no pueden identificar personas distintas',
+      );
+    }
+    return this.mealsService.requestLunch(
+      employeeCode,
+      requestMealDto.enrollmentId,
+    );
   }
 }

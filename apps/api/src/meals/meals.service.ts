@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -17,7 +18,30 @@ const RH_ADJUSTMENT_ACTIONS = ['CREATE', 'UPDATE', 'DELETE'];
 export class MealsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async requestLunch(employeeId: string) {
+  async requestLunch(employeeId: string, enrollmentId?: string) {
+    if (!employeeId.trim()) {
+      throw new BadRequestException('employeeCode es obligatorio');
+    }
+
+    if (enrollmentId) {
+      const enrollment = await this.prisma.fingerprint.findUnique({
+        where: { id: enrollmentId },
+        select: { active: true, employeeId: true },
+      });
+      if (!enrollment?.active || enrollment.employeeId !== employeeId) {
+        throw new ForbiddenException(
+          'El enrolamiento no está activo o no pertenece al empleado indicado',
+        );
+      }
+    } else if (
+      process.env.KIOSK_MEAL_LEGACY_COMPATIBILITY?.trim().toLowerCase() ===
+      'false'
+    ) {
+      throw new BadRequestException(
+        'enrollmentId es obligatorio para solicitar una comida',
+      );
+    }
+
     const employee = await this.prisma.employee.findUnique({
       where: { employeeCode: employeeId },
     });

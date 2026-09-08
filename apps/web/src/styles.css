@@ -255,14 +255,14 @@
   font-size: 1.18rem;
 }
 
-.chef-results-grid {
+.provider-results-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   background: var(--line);
 }
 
-.chef-day-result {
+.provider-day-result {
   display: flex;
   min-width: 0;
   min-height: 320px;
@@ -270,7 +270,7 @@
   background: var(--surface-soft);
 }
 
-.chef-day-result > header {
+.provider-day-result > header {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -279,33 +279,33 @@
   border-bottom: 1px solid var(--line);
 }
 
-.chef-day-result > header > div {
+.provider-day-result > header > div {
   display: flex;
   min-width: 0;
   gap: 2px;
   flex-direction: column;
 }
 
-.chef-day-result > header span {
+.provider-day-result > header span {
   color: #d8eeee;
   font-size: .76rem;
   font-weight: 800;
 }
 
-.chef-day-result > header small {
+.provider-day-result > header small {
   color: var(--muted);
   font-size: .57rem;
   font-weight: 500;
   text-transform: capitalize;
 }
 
-.chef-day-result > header > strong {
+.provider-day-result > header > strong {
   color: var(--green-700);
   font-size: 1.45rem;
   white-space: nowrap;
 }
 
-.chef-meal-bars {
+.provider-meal-bars {
   display: grid;
   gap: 14px;
   align-content: start;
@@ -313,7 +313,7 @@
   padding: 16px 14px;
 }
 
-.chef-meal-bar > div:first-child {
+.provider-meal-bar > div:first-child {
   display: flex;
   gap: 8px;
   align-items: flex-end;
@@ -321,7 +321,7 @@
   margin-bottom: 6px;
 }
 
-.chef-meal-bar span {
+.provider-meal-bar span {
   overflow-wrap: anywhere;
   color: #c2d5d3;
   font-size: .63rem;
@@ -329,21 +329,21 @@
   line-height: 1.3;
 }
 
-.chef-meal-bar strong {
+.provider-meal-bar strong {
   color: #fff;
   font-size: .75rem;
 }
 
-.chef-bar-track {
+.provider-bar-track {
   height: 8px;
   overflow: hidden;
   border-radius: 99px;
   background: #203032;
 }
 
-.chef-bar-track i {
+.provider-bar-track i {
   display: block;
-  width: var(--chef-bar-width);
+  width: var(--provider-bar-width);
   min-width: 2px;
   height: 100%;
   border-radius: inherit;
@@ -351,7 +351,7 @@
   box-shadow: 0 0 12px rgb(0 179 179 / 25%);
 }
 
-.chef-day-result > footer {
+.provider-day-result > footer {
   display: flex;
   gap: 6px;
   align-items: center;
@@ -362,22 +362,22 @@
   font-weight: 750;
 }
 
-.chef-day-result > footer i {
+.provider-day-result > footer i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--green-700);
 }
 
-.chef-day-result > footer.is-closed {
+.provider-day-result > footer.is-closed {
   color: #d1b373;
 }
 
-.chef-day-result > footer.is-closed i {
+.provider-day-result > footer.is-closed i {
   background: #c89432;
 }
 
-.chef-empty-day {
+.provider-empty-day {
   margin: 35px 0;
   color: var(--muted);
   font-size: .68rem;
@@ -389,13 +389,13 @@
 }
 
 @media (max-width: 1250px) {
-  .chef-results-grid {
+  .provider-results-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 850px) {
-  .chef-results-grid {
+  .provider-results-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -405,7 +405,7 @@
 }
 
 @media (max-width: 600px) {
-  .chef-results-grid,
+  .provider-results-grid,
   .monday-cutoff-control {
     grid-template-columns: 1fr;
   }

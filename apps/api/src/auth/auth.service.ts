@@ -3,7 +3,11 @@ import { JwtService } from '@nestjs/jwt';
 import bcrypt from 'bcryptjs';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { LoginDto } from './dto/login.dto.js';
-import type { AuthenticatedUser, UserRoleValue } from './auth.constants.js';
+import {
+  UserRole,
+  type AuthenticatedUser,
+  type UserRoleValue,
+} from './auth.constants.js';
 
 @Injectable()
 export class AuthService {
@@ -56,7 +60,9 @@ export class AuthService {
     return {
       id: user.id,
       username: user.username,
-      role: user.role as UserRoleValue,
+      role: user.role === 'CHEF'
+        ? UserRole.PROVEEDOR
+        : user.role as UserRoleValue,
     };
   }
 }

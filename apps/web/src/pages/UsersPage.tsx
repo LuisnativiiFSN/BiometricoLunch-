@@ -12,7 +12,7 @@ export function UsersPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirmation, setPasswordConfirmation] = useState('');
-  const [role, setRole] = useState<'RH' | 'CHEF'>('RH');
+  const [role, setRole] = useState<'RH' | 'PROVEEDOR'>('RH');
   const [resetUser, setResetUser] = useState<ManagedUser | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [newPasswordConfirmation, setNewPasswordConfirmation] = useState('');
@@ -107,7 +107,7 @@ export function UsersPage() {
     }
   };
 
-  const roleLabel = (userRole: ManagedUser['role']) => ({ ADMIN: 'Administrador', RH: 'Recursos Humanos', CHEF: 'Chef' })[userRole];
+  const roleLabel = (userRole: ManagedUser['role']) => ({ ADMIN: 'Administrador', RH: 'Recursos Humanos', PROVEEDOR: 'Proveedor' })[userRole];
 
   const closePasswordModal = () => {
     setResetUser(null);
@@ -122,7 +122,7 @@ export function UsersPage() {
         <div>
           <span className="section-kicker">Solo administrador</span>
           <h1>Usuarios y accesos</h1>
-          <p>Crea cuentas para Recursos Humanos y Cocina, y controla su acceso.</p>
+          <p>Crea cuentas para Recursos Humanos y Proveedor, y controla su acceso.</p>
         </div>
         <span className="security-badge">Permisos protegidos</span>
       </header>
@@ -138,9 +138,9 @@ export function UsersPage() {
             <label className="form-field">
               <span>Rol</span>
               <div className="select-wrap">
-                <select value={role} disabled={isSaving} onChange={(event) => setRole(event.target.value as 'RH' | 'CHEF')}>
+                <select value={role} disabled={isSaving} onChange={(event) => setRole(event.target.value as 'RH' | 'PROVEEDOR')}>
                   <option value="RH">Recursos Humanos</option>
-                  <option value="CHEF">Chef</option>
+                  <option value="PROVEEDOR">Proveedor</option>
                 </select>
               </div>
             </label>
